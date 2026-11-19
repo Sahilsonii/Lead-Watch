@@ -3,7 +3,8 @@
 Run: python pipeline/dashboard.py  ->  http://localhost:8765
 Knobs (env): CONCURRENCY (2), PAUSE_MIN (rest between cycles, 30), DEPTH (scroll depth per search, 10),
 GRID_CELL_KM (4), ENRICH_PER_CYCLE (websites read per cycle, 300), LINKEDIN_PER_CYCLE (Brave searches, 30),
-BRAVE_API_KEY (optional; enables LinkedIn names), BRAVE_MONTHLY_CAP (1000).
+BRAVE_API_KEY (optional; enables LinkedIn names), BRAVE_MONTHLY_CAP (1000), OSM_PER_CYCLE (Overpass queries, 20),
+FSQ_PER_CYCLE (Foursquare reads, 20), HF_TOKEN (optional; enables Foursquare after its free Hugging Face sign-up).
 """
 import asyncio
 import json
@@ -21,9 +22,11 @@ import phonenumbers
 
 import backoff
 import enrich
+import fsq
 import geo
 import grid
 import linkedin
+import osm
 import process as p
 
 PORT = 8765
@@ -35,24 +38,31 @@ ZOOM = 15  # gosom's default; its README gives no separate value for grid mode
 MAX_RESUMES = 2  # a run that keeps crashing is dropped; its searches stay queued for a fresh try
 PAUSE_MIN = float(os.environ.get("PAUSE_MIN", 30))
 ENRICH_PER_CYCLE = int(os.environ.get("ENRICH_PER_CYCLE", 300))
-LINKEDIN_PER_CYCLE = int(os.environ.get("LINKEDIN_PER_CYCLE", 30))  # spreads the monthly Brave credit over many cycles
+LINKEDIN_PER_CYCLE = int(os.environ.get("LINKEDIN_PER_CYCLE", 30))
+OSM_PER_CYCLE = int(os.environ.get("OSM_PER_CYCLE", 20))
+FSQ_PER_CYCLE = int(os.environ.get("FSQ_PER_CYCLE", 20))  # spreads the monthly Brave credit over many cycles
 PAGE = (Path(__file__).parent / "dashboard.html").read_bytes()
 STATE_FILE = p.DATA / "state.json"
 COUNTRIES = sorted(phonenumbers.SUPPORTED_REGIONS)
+STATE_LOCK = threading.RLock()  # the loop and the 3 s dashboard poll both read and write state.json
 
 
 def load_state():
-    try:
-        return json.loads(STATE_FILE.read_text())
-    except (OSError, ValueError):
-        return {"running": False, "dups_total": 0, "last_run": None}
+    with STATE_LOCK:
+        try:
+            return json.loads(STATE_FILE.read_text())
+        except (OSError, ValueError):
+            return {"running": False, "dups_total": 0, "last_run": None}
 
 
 def save_state(**changes):
-    state = {**load_state(), **changes}
-    p.DATA.mkdir(exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state))
-    return state
+    with STATE_LOCK:
+        state = {**load_state(), **changes}
+        p.DATA.mkdir(exist_ok=True)
+        tmp = STATE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state))
+        tmp.replace(STATE_FILE)  # a crash mid-write never leaves half a file
+        return state
 
 
 def docker_args(run, results, resume):
@@ -60,7 +70,8 @@ def docker_args(run, results, resume):
     args = ["docker", "run", "--rm", "--name", CONTAINER,
             "-v", "gmaps-playwright-cache:/opt", "-v", f"{p.DATA}:/out", IMAGE,
             "-input", "/out/batch.txt", "-results", f"/out/{results}", "-json", "-email",
-            "-depth", str(DEPTH), "-c", str(CONCURRENCY), "-exit-on-inactivity", "3m"]
+            "-depth", str(run.get("depth", DEPTH)), "-c", str(run.get("concurrency", CONCURRENCY)),
+            "-exit-on-inactivity", "3m"]
     if run["mode"] == "grid":
         args += ["-grid-bbox", run["bbox"], "-grid-cell", str(run["cell_km"]), "-grid-strict", "-zoom", str(ZOOM)]
     return args + ["-resume"] if resume else args
@@ -74,6 +85,7 @@ class Runner:
         self.thread = None
         self.phase = "stopped"
         self.known_at_start = set()
+        self.sources = {}  # last cycle's OpenStreetMap and Foursquare results, for the dashboard
 
     def start(self):
         if self.thread and self.thread.is_alive():
@@ -93,13 +105,17 @@ class Runner:
         while not self.stop.is_set():
             try:
                 run = load_state().get("run")  # unfinished run (Stop, crash, reboot): resume it as it was
+                if run and not grid.wanted(run):  # its location, or every sector in it, left the targets
+                    run = save_state(run=None)["run"]
                 resume = bool(run)
                 if not run:
                     self.phase = "planning"
                     run = grid.next_run(p.db())
-                    if run:
+                    if self.stop.is_set():  # Stop pressed while planning (geocoding): launch nothing
+                        continue
+                    if run:  # depth and concurrency go with the run: gosom resumes only with identical options
                         run = save_state(run={**run, "results": f"raw-{time.strftime('%Y%m%d-%H%M%S')}.json",
-                                              "resumes": 0})["run"]
+                                              "resumes": 0, "depth": DEPTH, "concurrency": CONCURRENCY})["run"]
                 if run:
                     self.scrape_once(run, resume)
                     wait = load_state().get("blocks", {}).get("google", {}).get("pause_min", PAUSE_MIN) * 60
@@ -123,6 +139,7 @@ class Runner:
         self.phase = "scraping"
         log_path = p.DATA / "scraper.log"
         start = log_path.stat().st_size if resume and log_path.exists() else 0
+        subprocess.run(["docker", "rm", "-f", CONTAINER], capture_output=True)  # a container left by a crash blocks the name
         with open(log_path, "a" if resume else "w") as log:
             code = subprocess.run(docker_args(run, out.name, resume), stdout=log, stderr=subprocess.STDOUT).returncode
         stopped = self.stop.is_set()
@@ -156,17 +173,23 @@ class Runner:
         self.phase = backoff.STOP_MESSAGE if auto_stopped else "resting"
 
     def enrich_cycle(self, scraped):
-        """Read business websites, then search Brave for missing owners, then rewrite the CSV."""
+        """Add places from OpenStreetMap and Foursquare, read business websites, search Brave for missing owners,
+        then rewrite the CSV. Runs even while Google is blocking: these are other hosts."""
         if self.stop.is_set():
             return
         after = self.phase
         con = p.db()
+        self.phase = "adding other sources"
+        with httpx.Client() as client:
+            self.sources = {"osm": osm.run_pending(con, client, OSM_PER_CYCLE, self.stop),
+                            "foursquare": fsq.run_pending(con, client, FSQ_PER_CYCLE, self.stop)}
+        added = any(s.get("new") or s.get("merged") for s in self.sources.values())
         self.phase = "reading websites"
         crawled = asyncio.run(enrich.enrich_pending(con, ENRICH_PER_CYCLE, self.stop)).get("crawled")
         self.phase = "searching LinkedIn"
         with httpx.Client() as client:
             looked_up = linkedin.lookup_pending(con, client, LINKEDIN_PER_CYCLE, self.stop).get("looked_up")
-        if scraped or crawled or looked_up:
+        if scraped or added or crawled or looked_up:
             self.phase = "exporting"
             p.export()
         if self.phase != backoff.STOP_MESSAGE:
@@ -254,10 +277,14 @@ def stats():
         "health": {"last_class": (state.get("last_run") or {}).get("class"), "score": google.get("score", 0),
                    "pause_min": google.get("pause_min", PAUSE_MIN), "next_attempt": state.get("next_attempt"),
                    "message": backoff.STOP_MESSAGE if google.get("stopped") else None},
-        "enrich": {"crawled": one("SELECT COUNT(*) FROM leads WHERE site_status IN ('ok', 'blocked', 'refused', 'timeout')"),
+        "enrich": {"crawled": one("SELECT COUNT(*) FROM leads WHERE site_status NOT IN ('skipped')"),
                    "names": one("SELECT COUNT(*) FROM leads WHERE owner_source LIKE 'Website%'"),
                    "blocked": one("SELECT COUNT(*) FROM leads WHERE site_status = 'blocked'")},
         "linkedin": {"used": used, "cap": cap} if os.environ.get("BRAVE_API_KEY") else {"skipped": "no BRAVE_API_KEY"},
+        "sources": {"osm": one("SELECT COUNT(*) FROM leads WHERE instr(sources, 'osm')"),
+                    "foursquare": one("SELECT COUNT(*) FROM leads WHERE instr(sources, 'foursquare')"),
+                    "last": runner.sources,  # typed-in sectors with no categories.json entry skip both sources
+                    "unmapped": [s for s in grid.targets()[0] if s not in osm.categories()]},
         "running": runner.thread is not None and runner.thread.is_alive(),
         "phase": runner.phase,
         "run_file": raws[-1].name if raws else None,
@@ -320,6 +347,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    p.db().close()  # add any new columns now, before the loop and the page poll both open the database
     if load_state().get("running"):
         runner.start()  # resume after a reboot or crash
     print(f"Lead Watch on http://localhost:{PORT}")

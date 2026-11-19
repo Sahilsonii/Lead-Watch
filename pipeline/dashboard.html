@@ -98,7 +98,7 @@
 
   /* run & health: where the scraper is, whether Google is letting it work, and what enrichment found */
   .health { margin-bottom: 16px; }
-  .cells { display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; }
+  .cells { display: grid; grid-template-columns: 1.6fr repeat(5, 1fr); }
   .cell { padding: 12px 16px; border-left: 1px solid var(--line); display: grid; gap: 4px; align-content: start; min-width: 0; }
   .cell:first-child { border-left: 0; }
   .cell .label { font-size: 12px; color: var(--dim); }
@@ -212,6 +212,8 @@
             <div class="sub" id="h-run-sub"></div><code id="h-run-bbox"></code></div>
           <div class="cell"><div class="label">Google</div><div class="val" id="h-google">–</div><div class="sub" id="h-google-sub"></div></div>
           <div class="cell"><div class="label">Websites read</div><div class="val num" id="h-sites">–</div><div class="sub" id="h-sites-sub"></div></div>
+          <div class="cell"><div class="label">OpenStreetMap</div><div class="val num" id="h-osm">–</div><div class="sub" id="h-osm-sub"></div></div>
+          <div class="cell"><div class="label">Foursquare</div><div class="val num" id="h-fsq">–</div><div class="sub" id="h-fsq-sub"></div></div>
           <div class="cell"><div class="label">LinkedIn names (Brave)</div><div class="val num" id="h-li">–</div><div class="sub" id="h-li-sub"></div></div>
         </div>
         <div class="stopnote" id="h-stop" role="alert" hidden></div>
@@ -238,8 +240,9 @@
   const PHASES = { scraping: "Scraping now", "verifying emails": "Verifying emails", resting: "Resting until the next batch",
     done: "All searches done. Add sectors or locations to continue", stopping: "Stopping…", stopped: "Stopped",
     planning: "Planning the next run", "reading websites": "Reading business websites",
+    "adding other sources": "Adding places from OpenStreetMap and Foursquare",
     "searching LinkedIn": "Looking up owners via Brave", exporting: "Writing leads.csv" };
-  const ACTIVE = new Set(["scraping", "verifying emails", "planning", "reading websites", "searching LinkedIn", "exporting"]);
+  const ACTIVE = new Set(["scraping", "verifying emails", "planning", "adding other sources", "reading websites", "searching LinkedIn", "exporting"]);
   const RUN_CLASS = { ok: ["ok", "Clean run"], blocked: ["found", "Blocked"], error: ["", "Scraper error"] };
 
   function renderHealth(d) {
@@ -270,7 +273,14 @@
     $("h-sites").textContent = fmt(en.crawled);
     $("h-sites-sub").textContent = `${fmt(en.names)} owner names · ${fmt(en.blocked)} blocked`;
     $("h-li").textContent = li.skipped ? "Off" : `${fmt(li.used)} / ${fmt(li.cap)}`;
-    $("h-li-sub").textContent = li.skipped ? "Add BRAVE_API_KEY to enable" : "searches this month";
+    const src = d.sources, last = src.last || {}, o = last.osm || {}, f = last.foursquare || {};
+    $("h-osm").textContent = fmt(src.osm);
+    $("h-osm-sub").textContent = (o.skipped || (last.osm ? `leads · last cycle ${fmt(o.new)} new, ${fmt(o.merged)} matched` : "leads"))
+      + (src.unmapped.length ? ` · not mapped, skipped: ${src.unmapped.join(", ")}` : "");
+    $("h-fsq").textContent = f.skipped === "no HF_TOKEN" ? "Off" : fmt(src.foursquare);
+    $("h-fsq-sub").textContent = f.skipped === "no HF_TOKEN" ? "Free; needs a Hugging Face sign-up and HF_TOKEN"
+      : f.skipped || (last.foursquare ? `leads · last cycle ${fmt(f.new)} new, ${fmt(f.merged)} matched` : "leads");
+    $("h-li-sub").textContent = li.skipped ? "Optional, and Brave's API needs a card on file" : "searches this month";
   }
   let seen = null, locations = [], sectors = [], sectorOptions = [], loaded = false;
 

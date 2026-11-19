@@ -91,6 +91,17 @@ def expand(locations, load=geo.towns):
     return out
 
 
+def wanted(run, load=geo.towns):
+    """Is a saved run's location, and at least one of its sectors, still in the targets?"""
+    sectors, locations = targets()
+    try:
+        places = {(loc, cc) for loc, cc, _ in expand(locations, load)}
+    except OSError:  # GeoNames unreadable: keep the run rather than drop it on a guess
+        return True
+    return (run.get("location"), run.get("cc")) in places and any(
+        p.split_input(i.split(" #!#")[-1])[1] in sectors for i in run["inputs"])
+
+
 def next_run(con, fetch=http_get_json, load=geo.towns):
     """The first location with sectors still to search, as one run; None when everything is done."""
     sectors, locations = targets()

@@ -4,6 +4,7 @@ crawl_site() reads a business's homepage plus up to 3 contact/about/team pages a
 finds there. It never passes a bot check: a challenge page just marks the site "blocked".
 """
 import asyncio
+import json
 import random
 import re
 import urllib.robotparser
@@ -54,7 +55,8 @@ def retry_wait(response, attempt):
 
 
 async def fetch(client, url):
-    """(status, final_url, text) or None for timeouts, network errors and non-text content (PDFs, images).
+    """(status, final_url, text) or None for timeouts and network errors. text is None for content that is not
+    a readable page (PDFs, images, svg+xml).
     Retries only RETRY_CODES, at most MAX_RETRIES times; reads at most MAX_BYTES."""
     for attempt in range(MAX_RETRIES + 1):
         try:
@@ -63,8 +65,8 @@ async def fetch(client, url):
                     wait = retry_wait(r, attempt)
                 else:
                     ctype = r.headers.get("content-type", "").lower()
-                    if ctype and not any(t in ctype for t in READABLE):
-                        return None
+                    if ctype.startswith("image/") or (ctype and not any(t in ctype for t in READABLE)):
+                        return r.status_code, str(r.url), None
                     body = bytearray()
                     async for chunk in r.aiter_bytes():
                         body += chunk
@@ -82,7 +84,7 @@ async def fetch(client, url):
 async def robots_for(client, origin):
     """Rules for the site, or None when robots.txt can't be read (5xx/timeout): then skip the site (RFC 9309)."""
     got = await fetch(client, origin + "/robots.txt")
-    if got is None or got[0] >= 500:
+    if got is None or got[0] >= 500 or (got[0] < 400 and got[2] is None):  # unreadable rules are not "allow all"
         return None
     rp = urllib.robotparser.RobotFileParser(origin + "/robots.txt")
     status, _, text = got
@@ -91,7 +93,7 @@ async def robots_for(client, origin):
     elif status >= 400:
         rp.allow_all = True
     else:
-        rp.parse(text.splitlines())
+        rp.parse((text or "").splitlines())
     rp.modified()
     return rp
 
@@ -105,7 +107,7 @@ async def sitemap_links(client, origin, rp, wait):
     got = await fetch(client, url)
     if not got or got[0] >= 400:
         return []
-    return [u for u in LOC_RE.findall(got[2])
+    return [u for u in LOC_RE.findall(got[2] or "")
             if c.host(u) == c.host(origin) and not u.lower().endswith(".xml")
             and any(k in urlsplit(u).path.lower() for k in c.KEYWORDS)]
 
@@ -146,6 +148,10 @@ async def crawl_site(client, url, business, phone, region, suffixes):
         return result("blocked")
     if status >= 400:
         return result("timeout")
+    if html is None:
+        return result("not_html")
+    if c.is_empty_shell(html):
+        return result("empty")  # JavaScript-only site: nothing to read without a browser
 
     pages = [(final, c.parse_page(html))]
     polite = wait <= MAX_CRAWL_DELAY_S
@@ -158,7 +164,7 @@ async def crawl_site(client, url, business, phone, region, suffixes):
             continue
         await pause(wait)
         got = await fetch(client, link)
-        if got is None or c.is_aggregator(got[1]):
+        if got is None or got[2] is None or c.is_aggregator(got[1]):
             continue
         if c.is_block_page(got[0], got[2]):
             status = "blocked"  # stop here; earlier pages were real pages, so keep what they gave
@@ -186,7 +192,7 @@ async def enrich_pending(con, limit, stop):
     Leads sharing a website (a chain) share one crawl, so a host is never read twice at once.
     Leads without a website are marked done too (crawl_site skips them without a request)."""
     leads = con.execute(f"""
-        SELECT place_id, name, website, phone, query FROM leads WHERE enriched_at IS NULL
+        SELECT place_id, name, website, phone, query, raw FROM leads WHERE enriched_at IS NULL
         ORDER BY ({p.VERIFIED}) + (phone_e164 IS NOT NULL) DESC LIMIT ?""", (limit,)).fetchall()
     stats = {"crawled": 0, "names": 0, "blocked": 0}
     gate, suffixes = asyncio.Semaphore(SITES_AT_ONCE), c.load_blocked_domains()
@@ -199,11 +205,13 @@ async def enrich_pending(con, limit, stop):
         async with gate:
             if stop.is_set():
                 return
-            _, name, website, phone, query = group[0]  # the chain's first lead stands in for the listing match
+            _, name, website, phone, query, _ = group[0]  # the chain's first lead stands in for the listing match
             try:
                 res = await crawl_site(client, website, name or "", phone, p.split_input(query)[0], suffixes)
             except Exception:  # one odd page must not stop the other sites or the 24/7 loop; not retried
                 res = result("error")
+            emails = [*res["emails"], *(m for *_, raw in group for m in json.loads(raw or "{}").get("emails") or [])]
+            await asyncio.to_thread(p.warm_mx, emails)  # DNS off the event loop; save_enrichment then hits the cache
             for place_id, *_ in group:
                 stats["names"] += p.save_enrichment(con, place_id, res)
                 stats["crawled"] += 1

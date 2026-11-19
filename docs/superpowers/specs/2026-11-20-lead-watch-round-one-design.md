@@ -229,6 +229,10 @@ Sahil wants LinkedIn data "with the safest and without login way" (2026-11-20). 
 - Free only; no CAPTCHA bypassing or anti-bot evasion (Sahil asked about CAPTCHA solvers on 2026-11-20; declined, and this anti-goal stands).
 - Search depth: maximum volume (depth 10) with the grid.
 - Tripadvisor: polite page reading (one request at a time, 3–6 s apart, robots.txt, the same back-off as Google, stop on any challenge page), not the official API (2026-11-20).
+- **Free only, no card** (2026-11-20, later the same day): this overrides the card accepted for Brave below. Brave stays optional and off by default; the dashboard says it needs a card. SearXNG stays rejected (see A6).
+- **Tripadvisor dropped** (2026-11-20, while building B): its first list page answered 403 with a DataDome challenge (`captcha-delivery.com`) to one polite request. Under the no-bypass rule that is a stop, like Yelp and Yellow Pages. B1's Tripadvisor design is kept for the record only.
+- **Foursquare access** is the Hugging Face gated dataset (one form, no card, `HF_TOKEN`), not the Iceberg portal token. Labels are matched by whole category segments from `categories.json` (builder's call; check with `fsq.py check`).
+- Matching radius for phone and website hits: 500 m when both places have coordinates, so chain branches stay apart (builder's call).
 - LinkedIn: only through Brave's search API (A6), with no login, never fetching LinkedIn, capped at ~1,000 lookups a month to stay inside Brave's free credit. A card on file is accepted for this (2026-11-20).
 
 ## Left to the builder (my calls, open to correction)

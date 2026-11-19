@@ -16,6 +16,10 @@ assert "/out/raw-1.json" in args and "/out/batch.txt" in args
 resumed = d.docker_args(grid_run, "raw-1.json", resume=True)
 assert "-resume" in resumed and [a for a in resumed if a != "-resume"] == args
 
+# a resume uses the run's own depth and concurrency, even if the env changed since it started
+kept = d.docker_args({**grid_run, "depth": 3, "concurrency": 1}, "raw-1.json", resume=True)
+assert kept[kept.index("-depth") + 1] == "3" and kept[kept.index("-c") + 1] == "1"
+
 plain = d.docker_args(plain_run, "raw-2.json", resume=False)
 assert not any(a.startswith("-grid") for a in plain) and "-zoom" not in plain
 
@@ -46,6 +50,7 @@ def fake_run(code, places=1):
     return run
 
 
+grid.targets = lambda: (["dentist"], [("Dubai", "AE")])
 saved = {**grid_run, "location": "Dubai", "cc": "AE", "results": "raw-1.json", "resumes": 0}
 d.save_state(run=saved)
 grid.next_run = lambda con: (_ for _ in ()).throw(AssertionError("must resume, not plan a new run"))
@@ -97,12 +102,15 @@ async def fake_enrich(con, limit, stop):
     return {"crawled": 0, "names": 0, "blocked": 0}
 d.enrich.enrich_pending = fake_enrich
 d.linkedin.lookup_pending = lambda con, client, limit, stop: order.append("linkedin") or {}
+d.osm.run_pending = lambda con, client, limit, stop: order.append("osm") or {"new": 0, "merged": 0}
+d.fsq.run_pending = lambda con, client, limit, stop: order.append("fsq") or {"new": 0, "merged": 0, "skipped": "no HF_TOKEN"}
 r = d.Runner()
 d.p.export = lambda: order.append("export") or r.stop.set()
 r.scrape_once = lambda run, resume: order.append("scrape")
 d.save_state(run=saved, running=True)
 r.loop()
-assert order == ["scrape", "enrich", "linkedin", "export"], order
+assert order == ["scrape", "osm", "fsq", "enrich", "linkedin", "export"], order  # new places get their sites read
+assert r.sources["foursquare"]["skipped"] == "no HF_TOKEN"
 
 # run panel: grid cells = rows x columns of the bbox, per sector; done = finished Maps search jobs in the log
 log = '{"message":"job finished","job":"Job{URL: https://www.google.com/maps/search/a}","status":"success"}\n' * 3
@@ -151,6 +159,44 @@ r.scrape_once = flaky
 d.PAUSE_MIN = 0
 r.loop()
 assert len(tries) == 2 and "PermissionError" in (tmp / "runner.log").read_text()
+
+# state.json: concurrent writers never lose each other's changes, and no temp file is left behind
+import threading
+d.save_state(run=None)
+writers = [threading.Thread(target=d.save_state, kwargs={f"k{i}": i}) for i in range(30)]
+[t.start() for t in writers]
+[t.join() for t in writers]
+assert all(d.load_state().get(f"k{i}") == i for i in range(30)), d.load_state()
+assert [f.name for f in tmp.glob("state*")] == ["state.json"]
+
+# Stop pressed while planning: Docker is never launched
+launched.clear()
+d.subprocess.run = fake_run(0)
+r = d.Runner()
+grid.next_run = lambda con: (r.stop.set(), {**saved, "results": None})[1]
+d.save_state(run=None, running=True)
+r.loop()
+assert not any(a[:2] == ["docker", "run"] for a in launched), launched
+
+# a new run records its depth and concurrency; an orphaned container is removed before the launch
+launched.clear()
+r = d.Runner()
+grid.next_run = lambda con: dict(saved)
+r.scrape_once = (lambda orig: lambda run, resume: (orig(run, resume), r.stop.set()))(r.scrape_once)
+r.loop()
+assert launched[0][:3] == ["docker", "rm", "-f"] and launched[1][:2] == ["docker", "run"], launched
+assert launched[1][launched[1].index("-depth") + 1] == str(d.DEPTH)
+
+# a kept run whose location was removed from the targets is dropped, not resumed
+launched.clear()
+grid.targets = lambda: (["dentist"], [("London", "GB")])
+r = d.Runner()
+grid.next_run = lambda con: r.stop.set()
+d.save_state(run=saved, running=True)
+r.loop()
+assert d.load_state()["run"] is None and not launched, launched
+grid.targets = lambda: (["dentist"], [("Dubai", "AE")])
+
 # sector dropdown: sectors.txt must survive save_targets unchanged (lowercase, no "#" or "|", no repeats)
 opts = d.p.lines("sectors.txt")
 assert len(opts) >= 40 and len(set(opts)) == len(opts), "sectors.txt has repeats"

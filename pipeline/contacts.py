@@ -268,7 +268,8 @@ def _on(h, domains):
 def is_aggregator(url):
     """Social networks, review sites and Google pages are not the business's own website."""
     h = host(url)
-    return bool(h) and (_on(h, AGGREGATOR_HOSTS) or bool(GOOGLE_RE.search(h)))
+    google_page = bool(GOOGLE_RE.search(h)) and not _on(h, ("sites.google.com",))  # Google Sites = the business's own site
+    return bool(h) and (_on(h, AGGREGATOR_HOSTS) or google_page)
 
 
 def social_links(page, page_url):
@@ -323,7 +324,7 @@ def site_matches_listing(page_text, phone, business):
 
 
 # Markers that only appear on challenge/interstitial pages (our own list, not copied from crawl4ai).
-STRONG_MARKERS = ("cf-chl", "captcha-delivery.com", "px-captcha", "_incapsula_resource")
+STRONG_MARKERS = ("cf-chl", "_cf_chl_opt", "captcha-delivery.com", "px-captcha", "_incapsula_resource")
 # Can also sit on a normal page (Cloudflare Turnstile on a contact form), so only counts on an error status.
 WEAK_MARKERS = ("challenges.cloudflare.com", "attention required! | cloudflare", "checking your browser")
 
@@ -332,7 +333,10 @@ def is_block_page(status, html):
     low = (html or "").lower()
     if any(m in low for m in STRONG_MARKERS):
         return True
-    if status in (403, 429, 503) and (any(m in low for m in WEAK_MARKERS)
-                                      or ("access denied" in low and "reference #" in low)):
-        return True
-    return status == 200 and len(parse_page(html or "").text) < 50  # empty JS shell: nothing to read
+    return status in (403, 429, 503) and (any(m in low for m in WEAK_MARKERS)
+                                          or ("access denied" in low and "reference #" in low))
+
+
+def is_empty_shell(html):
+    """A JavaScript-only page: nothing to read without a browser. Not a block."""
+    return len(parse_page(html or "").text) < 50

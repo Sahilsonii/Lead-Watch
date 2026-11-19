@@ -1,3 +1,4 @@
 dnspython==2.8.0
 phonenumbers==9.0.18
 httpx==0.28.1
+duckdb==2.0.0  # Foursquare only; everything else runs without it

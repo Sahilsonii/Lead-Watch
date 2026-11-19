@@ -77,6 +77,14 @@ assert not c.is_block_page(200, "<html><body>" + "real text " * 20 + "</body></h
 assert not c.is_block_page(200, "<html><body>" + "contact us " * 20 +
                            "<script src='https://challenges.cloudflare.com/turnstile/v0/api.js'></script></body></html>")
 assert c.is_block_page(503, "<html><body>Checking your browser <script src='https://challenges.cloudflare.com/x'></script></body></html>")
+# a Cloudflare challenge that carries only its _cf_chl_opt script is still a challenge
+assert c.is_block_page(200, "<html><script>window._cf_chl_opt={cvId:'3'}</script>" + "please wait " * 10 + "</html>")
+# an empty JavaScript shell is not a block: the crawl labels it "empty"
+assert not c.is_block_page(200, "<html><body><div id='root'></div></body></html>")
+
+# Google Sites is a business's own website builder, not a Google page
+assert not c.is_aggregator("https://sites.google.com/view/smileclinic")
+assert c.is_aggregator("https://www.google.com/maps/place/x")
 
 # long unbroken text (minified pages) must not make the email patterns backtrack for minutes
 import time

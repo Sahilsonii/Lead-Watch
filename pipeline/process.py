@@ -6,7 +6,9 @@ Usage:
   python pipeline/process.py export         # write data/leads.csv
 """
 import csv
+import difflib
 import json
+import math
 import os
 import re
 import smtplib
@@ -36,9 +38,10 @@ WHATSAPP_TYPES = {T.MOBILE, T.FIXED_LINE_OR_MOBILE}
 def ensure_columns(con, table, cols):
     """Add missing columns, so older databases keep working as the schema grows."""
     have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
-    for name, kind in cols.items():
-        if name not in have:
-            con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+    added = [name for name in cols if name not in have]
+    for name in added:
+        con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {cols[name]}")
+    return added
 
 
 def db(path=None):
@@ -53,11 +56,25 @@ def db(path=None):
             scraped_at TEXT DEFAULT CURRENT_TIMESTAMP, raw TEXT);
         CREATE TABLE IF NOT EXISTS locations(
             name TEXT, cc TEXT, bbox TEXT, area_km2 REAL, PRIMARY KEY(name, cc));
+        CREATE TABLE IF NOT EXISTS lead_sources(
+            lead_id TEXT, source TEXT, source_id TEXT, raw TEXT, PRIMARY KEY(source, source_id));
     """)
-    ensure_columns(con, "leads", {  # databases from before the 18- and 20-column exports
+    added = ensure_columns(con, "leads", {  # databases from before the 18- and 20-column exports
         "raw": "TEXT", "owner_name": "TEXT", "owner_role": "TEXT", "owner_source": "TEXT", "social_links": "TEXT",
         "site_status": "TEXT", "site_matches": "INTEGER", "enriched_at": "TEXT", "linkedin_url": "TEXT",
-        "linkedin_checked_at": "TEXT", "sources": "TEXT DEFAULT 'google_maps'"})
+        "linkedin_checked_at": "TEXT", "sources": "TEXT DEFAULT 'google_maps'",
+        "lat": "REAL", "lon": "REAL", "phone_any": "TEXT", "domain": "TEXT"})  # cross-source match keys
+    if "lat" in added:  # leads from before matching: fill their keys from the stored Google data, once
+        for place_id, phone, website, query, raw in con.execute(
+                "SELECT place_id, phone, website, query, raw FROM leads").fetchall():
+            k = match_keys({**json.loads(raw or "{}"), "phone": phone, "web_site": website, "input_id": query})
+            con.execute("UPDATE leads SET lat = ?, lon = ?, phone_any = ?, domain = ? WHERE place_id = ?",
+                        (k["lat"], k["lon"], k["phone_any"], k["domain"], place_id))
+    con.executescript("""
+        CREATE INDEX IF NOT EXISTS leads_phone_any ON leads(phone_any);
+        CREATE INDEX IF NOT EXISTS leads_domain ON leads(domain);
+        CREATE INDEX IF NOT EXISTS leads_lat ON leads(lat);
+    """)
     return con
 
 
@@ -128,6 +145,13 @@ def mx_host(domain):
     return _mx[domain]
 
 
+def warm_mx(emails):
+    """Look up each email's mail server into the cache. Run in a thread, so the crawl's event loop never waits on DNS.
+    shortcut: SMTP_CHECK=1 mailbox checks still run inside save_enrichment; move them too if that mode gets used."""
+    for e in emails:
+        mx_host(e.strip().lower().rsplit("@", 1)[-1])
+
+
 def verify_email(email):
     """invalid | mx_ok (domain takes mail) | smtp_ok (mailbox accepted) | catch_all (domain accepts anything)."""
     email = email.strip().lower()
@@ -169,6 +193,111 @@ def best_email(emails, website):
     return best
 
 
+# --- cross-source matching: one lead per business, whichever source finds it first ---------------------
+MATCH_PHONE_SITE_M = 500  # chains share one number and one website, so branches farther apart stay separate leads
+MATCH_NAME_M = 150
+MATCH_NAME_RATIO = 0.85
+
+
+def phone_key(phone, region):
+    """Any valid number, landline or mobile, as +E.164 (phone_e164 holds mobiles only, so it can't match landlines)."""
+    try:
+        n = phonenumbers.parse(phone or "", region or None)
+    except phonenumbers.NumberParseException:
+        return None
+    return phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.E164) if phonenumbers.is_valid_number(n) else None
+
+
+def site_domain(url):
+    """'https://www.Smile.ae/x' -> 'smile.ae'. None for Facebook, directories and Google pages: shared, not the business's."""
+    url = (url or "").strip()
+    url = url if "://" in url else "https://" + url
+    return None if contacts.is_aggregator(url) else contacts.host(url) or None
+
+
+def match_keys(e):
+    """What a gosom-shaped place is matched on."""
+    return {"phone_any": phone_key(e.get("phone"), split_input(e.get("input_id"))[0]),
+            "domain": site_domain(e.get("web_site")), "lat": e.get("latitude"), "lon": e.get("longitude")}
+
+
+def meters(lat1, lon1, lat2, lon2):
+    if None in (lat1, lon1, lat2, lon2):
+        return None
+    return math.hypot(lat2 - lat1, (lon2 - lon1) * math.cos(math.radians(lat1))) * 111_320
+
+
+def find_match(con, name, k, google=False):
+    """place_id of the lead this place already is, or None: the same phone, then the same website, each within
+    500 m when both have coordinates, then a name at least 85% alike within 150 m. A Google listing only takes over
+    leads no Google listing has: two Google ids are two places."""
+    only = " AND instr(COALESCE(sources, 'google_maps'), 'google_maps') = 0" if google else ""
+    for col in ("phone_any", "domain"):
+        if k[col]:
+            for place_id, lat, lon, domain in con.execute(
+                    f"SELECT place_id, lat, lon, domain FROM leads WHERE {col} = ?{only}", (k[col],)).fetchall():
+                if k["domain"] and domain and k["domain"] != domain:
+                    continue  # one building's shared reception number, two businesses with their own websites
+                d = meters(k["lat"], k["lon"], lat, lon)
+                if d is None or d <= MATCH_PHONE_SITE_M:
+                    return place_id
+    if k["lat"] is None or k["lon"] is None or not name:
+        return None
+    dlat = MATCH_NAME_M / 111_320
+    dlon = dlat / max(math.cos(math.radians(k["lat"])), 0.01)
+    for place_id, other, lat, lon in con.execute(
+            f"SELECT place_id, name, lat, lon FROM leads WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?{only}",
+            (k["lat"] - dlat, k["lat"] + dlat, k["lon"] - dlon, k["lon"] + dlon)).fetchall():
+        if (meters(k["lat"], k["lon"], lat, lon) <= MATCH_NAME_M and
+                difflib.SequenceMatcher(None, contacts.norm(name), contacts.norm(other)).ratio() >= MATCH_NAME_RATIO):
+            return place_id
+    return None
+
+
+def ingest_source(con, source, entries):
+    """Merge places from a second source (gosom-shaped dicts plus "source_id") into leads. Returns (new, merged).
+    A match fills empty fields only; anything else becomes a new lead "<source>:<source_id>". An element seen
+    before is skipped, so a repeated query never adds a duplicate."""
+    new = merged = 0
+    for e in entries:
+        sid = str(e["source_id"])
+        if con.execute("SELECT 1 FROM lead_sources WHERE source = ? AND source_id = ?", (source, sid)).fetchone():
+            continue
+        cc = split_input(e.get("input_id"))[0]
+        k = match_keys(e)
+        email, status = best_email(e.get("emails"), e.get("web_site"))
+        fresh = {"name": e.get("title"), "category": e.get("category"), "address": e.get("address"),
+                 "website": e.get("web_site"), "phone": e.get("phone"), "maps_link": e.get("link"),
+                 "phone_e164": to_e164(e.get("phone"), cc), **k}
+        lead = find_match(con, e.get("title"), k)
+        if lead:
+            cols = [*fresh, "email_status", "sources"]
+            old = dict(zip(cols, con.execute(f"SELECT {', '.join(cols)} FROM leads WHERE place_id = ?",
+                                             (lead,)).fetchone()))
+            fill = {c: v for c, v in fresh.items() if v not in (None, "") and old[c] in (None, "")}
+            if status in GOOD_EMAIL and RANK[status] > RANK.get(old["email_status"], -1):
+                fill |= {"email": email, "email_status": status}
+            if source not in (old["sources"] or "google_maps").split():
+                fill["sources"] = f"{old['sources'] or 'google_maps'} {source}"
+            if "website" in fill:
+                fill["enriched_at"] = None  # a website new to this lead: let the crawl read it
+            if fill:
+                con.execute(f"UPDATE leads SET {', '.join(c + ' = ?' for c in fill)} WHERE place_id = ?",
+                            (*fill.values(), lead))
+            merged += 1
+        else:
+            lead = f"{source}:{sid}"
+            row = {**fresh, "place_id": lead, "country": cc, "email": email, "email_status": status,
+                   "query": e.get("input_id"), "raw": json.dumps(e), "sources": source}
+            con.execute(f"INSERT INTO leads({', '.join(row)}) VALUES ({', '.join('?' * len(row))})",
+                        tuple(row.values()))
+            new += 1
+        con.execute("INSERT INTO lead_sources(lead_id, source, source_id, raw) VALUES (?,?,?,?)",
+                    (lead, source, sid, json.dumps(e)))
+    con.commit()
+    return new, merged
+
+
 def read_entries(path):
     text = Path(path).read_text(encoding="utf-8").strip()
     if not text:
@@ -187,7 +316,13 @@ def ingest(path, done_keys=()):
         key = e.get("place_id") or e.get("data_id") or e.get("link")
         if not key:
             continue
+        k = match_keys(e)
         if con.execute("SELECT 1 FROM leads WHERE place_id = ?", (key,)).fetchone():
+            dup += 1
+        elif other := find_match(con, e.get("title"), k, google=True):  # found by OSM/Foursquare first: take it over
+            con.execute("UPDATE leads SET place_id = ?, sources = 'google_maps ' || sources WHERE place_id = ?",
+                        (key, other))
+            con.execute("UPDATE lead_sources SET lead_id = ? WHERE lead_id = ?", (key, other))
             dup += 1
         else:
             new += 1
@@ -195,9 +330,16 @@ def ingest(path, done_keys=()):
         phone_e164 = to_e164(e.get("phone"), split_input(e.get("input_id"))[0])
         con.execute("""
             INSERT INTO leads(place_id, name, category, address, country, website, phone, phone_e164,
-                              maps_link, rating, reviews, email, email_status, query, raw)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                              maps_link, rating, reviews, email, email_status, query, raw, lat, lon, phone_any, domain)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(place_id) DO UPDATE SET
+                name = COALESCE(NULLIF(excluded.name, ''), name),
+                category = COALESCE(NULLIF(excluded.category, ''), category),
+                address = COALESCE(NULLIF(excluded.address, ''), address), country = COALESCE(excluded.country, country),
+                website = COALESCE(NULLIF(excluded.website, ''), website),
+                phone = COALESCE(NULLIF(excluded.phone, ''), phone), maps_link = COALESCE(excluded.maps_link, maps_link),
+                lat = COALESCE(excluded.lat, lat), lon = COALESCE(excluded.lon, lon),
+                phone_any = COALESCE(excluded.phone_any, phone_any), domain = COALESCE(excluded.domain, domain),
                 email = COALESCE(excluded.email, email),
                 email_status = COALESCE(excluded.email_status, email_status),
                 phone_e164 = COALESCE(excluded.phone_e164, phone_e164),
@@ -206,7 +348,7 @@ def ingest(path, done_keys=()):
             (key, e.get("title"), e.get("category"), e.get("address"),
              (e.get("complete_address") or {}).get("country"), e.get("web_site"), e.get("phone"),
              phone_e164, e.get("link"), e.get("review_rating"), e.get("review_count"),
-             email, status, e.get("input_id"), json.dumps(e)))
+             email, status, e.get("input_id"), json.dumps(e), k["lat"], k["lon"], k["phone_any"], k["domain"]))
     con.executemany("INSERT OR IGNORE INTO queries(q) VALUES (?)", [(k,) for k in done_keys])
     con.commit()
     return new, dup
@@ -349,7 +491,17 @@ def export():
         w = csv.writer(f)
         w.writerow(COLUMNS)
         w.writerows(lead_row(r) for r in rows)
+    (DATA / "ATTRIBUTION.txt").write_text(ATTRIBUTION, encoding="utf-8")  # travels with leads.csv
     return len(rows)
+
+
+ATTRIBUTION = """Data sources for leads.csv (see its Sources column)
+
+osm: (c) OpenStreetMap contributors, available under the Open Database License (ODbL 1.0).
+     https://www.openstreetmap.org/copyright. A database made from it that you share must stay under the ODbL.
+foursquare: Foursquare Open Source Places, Apache License 2.0. https://huggingface.co/datasets/foursquare/fsq-os-places
+Place lists for whole-country search: GeoNames (geonames.org), CC BY 4.0.
+"""
 
 
 if __name__ == "__main__":

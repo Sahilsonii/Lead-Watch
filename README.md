@@ -2,13 +2,13 @@
 
 # 🛰️ Lead Watch
 
-**Google Maps → verified, deduplicated business leads, 24/7.**
+**Google Maps + OpenStreetMap + Foursquare → verified, deduplicated business leads, 24/7.**
 
-Pick sectors and locations, press **Start**, and Lead Watch scrapes Google Maps, reads each business's own website for contacts and owner names, verifies emails, and exports clean leads to `data/leads.csv`.
+Pick sectors and locations, press **Start**, and Lead Watch scrapes Google Maps, adds free open-data places from OpenStreetMap (and Foursquare, once you sign up), reads each business's own website for contacts and owner names, verifies emails, and exports clean leads to `data/leads.csv`.
 
 ![Python](https://img.shields.io/badge/python-3-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/needs-Docker-2496ED?logo=docker&logoColor=white)
-![Dependencies](https://img.shields.io/badge/dependencies-3-brightgreen)
+![Dependencies](https://img.shields.io/badge/dependencies-4-brightgreen)
 ![Dashboard](https://img.shields.io/badge/dashboard-localhost%3A8765-orange)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
@@ -51,12 +51,13 @@ Every cycle runs this loop until you press **Stop**:
 flowchart LR
     A["📍 Pick next location<br/>with sectors left"] --> B["🗺️ Scrape Google Maps<br/>gosom scraper in Docker<br/>4 km grid for cities"]
     B --> C{"🚦 Google<br/>blocking?"}
-    C -- yes --> P["⏸️ Back off<br/>30, 60, 120, 240 min<br/>stop after 4 blocks"]
-    C -- no --> D["🌐 Read business websites<br/>robots.txt first, max 4 pages"]
+    C -- yes --> P["⏸️ Back off<br/>30, 60, 120, 240 min<br/>stop at block score 4"]
+    C -- no --> S["🧭 Add places from<br/>OpenStreetMap, Foursquare<br/>matched to existing leads"]
+    P --> S
+    S --> D["🌐 Read business websites<br/>robots.txt first, max 4 pages"]
     D --> E["🔎 Owner names via<br/>Brave Search, optional"]
     E --> F["✅ Verify, dedupe, score<br/>export data/leads.csv"]
     F --> R["😴 Rest PAUSE_MIN"]
-    P --> R
     R --> A
 ```
 
@@ -66,9 +67,10 @@ flowchart LR
 1. **Pick** the next location that still has sectors to search. Single cities always come first, then any [whole country](#-whole-country-search), place by place.
 2. **Scrape** it with [gosom/google-maps-scraper](https://github.com/gosom/google-maps-scraper) in Docker. A location up to 2,500 km² (a city or district) is searched as a **grid** of 4 km cells, which finds far more than the ~120 places Google returns for one search. Bigger areas (states, whole countries) fall back to one plain search per sector.
 3. **Check** whether Google is blocking the IP, and back off if so ([details](#-when-google-blocks)).
-4. **Read** up to 300 business websites politely: robots.txt first, one page at a time per site, 1–2 s apart, at most 4 pages each (home, contact, about, team).
-5. **Look up** missing owner names through Brave Search, if you turned it on ([LinkedIn names](#-linkedin-names-optional)).
-6. **Export** every lead with a verified email or a mobile number, best leads first.
+4. **Add** places from OpenStreetMap and Foursquare for the same sectors and locations ([other sources](#-other-sources)). This runs even while Google is blocking, because it uses other hosts.
+5. **Read** up to 300 business websites politely: robots.txt first, one page at a time per site, 1–2 s apart, at most 4 pages each (home, contact, about, team).
+6. **Look up** missing owner names through Brave Search, if you turned it on ([LinkedIn names](#-linkedin-names-optional)).
+7. **Export** every lead with a verified email or a mobile number, best leads first.
 
 </details>
 
@@ -77,7 +79,7 @@ flowchart LR
 | Level | Rule |
 |---|---|
 | **Searches** | A sector × location runs once, ever. Grid and plain searches are tracked separately. |
-| **Places** | Stored by Google place id, so a business found by two searches is saved once. |
+| **Places** | Stored by Google place id, so a business found by two searches is saved once. A place from OpenStreetMap or Foursquare joins an existing lead when the phone matches or the website domain matches (each within 500 m, so chain branches stay apart), or when the name is 85% alike within 150 m. A shared phone never joins two places with different websites (one building, one reception, two clinics). It only fills empty fields; Google's values win. |
 | **Websites** | Each site is read once, ever. Leads that share a website (a chain) share one read. |
 | **Contacts** | In the export, a repeated email or phone (chains, duplicate listings) appears once. |
 
@@ -124,9 +126,9 @@ Place data comes from [GeoNames](https://www.geonames.org/) (CC BY 4.0), downloa
 
 - **Owner Name** is best effort. **Owner Source** says where it came from, best first: Website structured data, Website team page, Business name ("Dr. …"), Website email link (a named mailto link), LinkedIn search result, Email address (guess), or Not found. Company-looking names ("SMILE DENTAL LTD") are never used as owners.
 - **Phone** and **WhatsApp** use each country's standard grouping with the country code (`+971 4 566 2262`, `+44 20 7946 0958`, `+1 416-555-0199`), however Google wrote them. A number that can't be parsed is left as it was.
-- **WhatsApp** is the mobile number. It is likely on WhatsApp but not checked.
+- **WhatsApp** is the mobile number. It is likely on WhatsApp but not checked. It keeps its spaces for reading; strip them and the `+` for a `wa.me/` link: `+971 50 123 4567` → `wa.me/971501234567`.
 - **Website** is empty when the Maps "website" is really a Facebook, Instagram or directory page; that link moves to **Social Links**, with the Instagram, Facebook, LinkedIn and other profiles found on the site.
-- **Sources** says which source found the lead (`google_maps` for now).
+- **Sources** lists every source that found the lead: `google_maps`, `osm`, `foursquare` (for example `google_maps osm`). Leads found only through OpenStreetMap or Foursquare have no Google reviews or rating; their verdict uses the other signals.
 - **Postcode / City** are empty where Google has none (for example the UAE). City then falls back to the searched location.
 
 </details>
@@ -173,7 +175,11 @@ Set these as environment variables before starting the dashboard.
 | `PAUSE_MIN` | 30 | Rest between cycles (doubles while Google blocks) |
 | `ENRICH_PER_CYCLE` | 300 | Websites read per cycle |
 | `LINKEDIN_PER_CYCLE` | 30 | Brave searches per cycle |
-| `BRAVE_API_KEY` | (none) | Turns on LinkedIn name lookups |
+| `OSM_PER_CYCLE` | 20 | OpenStreetMap (Overpass) queries per cycle |
+| `OVERPASS_URL` | overpass-api.de | Another Overpass server, if that one is busy |
+| `HF_TOKEN` | (none) | Turns on Foursquare (see [other sources](#-other-sources)) |
+| `FSQ_PER_CYCLE` | 20 | Foursquare reads per cycle |
+| `BRAVE_API_KEY` | (none) | Turns on LinkedIn name lookups (Brave asks for a card) |
 | `BRAVE_MONTHLY_CAP` | 1000 | Hard cap on Brave searches per month |
 | `SMTP_CHECK` | off | `1` adds an SMTP mailbox check |
 
@@ -188,17 +194,43 @@ Set these as environment variables before starting the dashboard.
 
 A run counts as blocked when most searches fail, when Google shows its "unusual traffic" page, or when it finds nothing without every search finishing cleanly. (Searches that all finish cleanly and find nothing just mean an empty area.)
 
-| Blocks in a row | Pause before next cycle |
-|---|---|
-| 0 (clean run) | 30 min |
-| 1 | 60 min |
-| 2 | 120 min |
-| 3 | 240 min |
-| 4 | **Loop stops itself** |
+Each blocked run adds 1 to a **block score**; each clean run takes 0.5 off (never below 0). So one lucky run between blocks does not reset the danger.
 
-At four blocks the dashboard says "Google is blocking this IP. Stopped to protect it." Wait a day or move to another IP, then press Start. An interrupted run (Stop, crash, reboot, block) resumes where it left off rather than starting over. Website reading and LinkedIn lookups keep going while Google blocks, because they use other hosts.
+| After a run | Pause before next cycle |
+|---|---|
+| Clean run | 30 min (back to normal) |
+| 1st block | 60 min |
+| 2nd block | 120 min |
+| 3rd block and later | 240 min (the cap) |
+| Block score reaches 4 | **Loop stops itself** |
+
+At a score of 4 the dashboard says "Google is blocking this IP. Stopped to protect it." Wait a day or move to another IP, then press Start. An interrupted run (Stop, crash, reboot, block) resumes where it left off rather than starting over. OpenStreetMap, Foursquare, website reading and LinkedIn lookups keep going while Google blocks, because they use other hosts.
 
 If anything else fails (for example `leads.csv` is open in Excel), the loop writes the error to `data/runner.log`, shows it on the dashboard, and tries again after the pause.
+
+</details>
+
+### 🧭 Other sources
+
+<details>
+<summary><b>OpenStreetMap, Foursquare, and why not Tripadvisor</b></summary>
+
+Both sources are free and need no card. They search the same sectors and locations as Google, mapped to their own categories in [`categories.json`](categories.json) (edit it to change what a sector means there). Only places with a phone, website or email are kept, and each one is [matched](#%EF%B8%8F-dedupe-is-always-on) to the leads already saved.
+
+**OpenStreetMap** (on by default, no account). Queried through the public Overpass API, one query per sector and location, 2 s apart. A single city uses its geocoded area; a whole country is one query, split into its towns and cities when Overpass says it is too big. When Overpass is busy, OSM waits for the next cycle. Data © OpenStreetMap contributors, [ODbL](https://www.openstreetmap.org/copyright): a database you build from it and share must stay under the ODbL.
+
+**Foursquare Open Source Places** (Apache 2.0, off until you sign up). The data sits on Hugging Face behind a one-time form:
+
+- [ ] Sign in at https://huggingface.co and open https://huggingface.co/datasets/foursquare/fsq-os-places. Fill in the short form and press **Agree**. (By agreeing, Foursquare may name your organization as a user of the data.)
+- [ ] Create a **read** token at https://huggingface.co/settings/tokens.
+- [ ] Set it in your environment, never in a file: `$env:HF_TOKEN = "..."`, then start the dashboard.
+- [ ] Optional: `python pipeline/fsq.py check AE` lists category labels in `categories.json` that match no place, so they can be corrected.
+
+The first read of a country copies that country's open places (out of an ~11.6 GB release) into `data/fsq/<CC>.parquet`, once; every query after that is local. This needs `duckdb` (in `requirements.txt`).
+
+**Tripadvisor is not used.** A single polite request on 2026-11-20 got a 403 with a DataDome bot check, and Lead Watch never tries to pass bot checks (the same reason Yelp and Yellow Pages are out).
+
+`data/ATTRIBUTION.txt` is written next to `leads.csv` with the credits these licenses require.
 
 </details>
 
@@ -206,6 +238,8 @@ If anything else fails (for example `leads.csv` is open in Excel), the loop writ
 
 <details>
 <summary><b>How it works and how to turn it on</b></summary>
+
+**Not free:** Brave's Search API asks for a card on file, even for its monthly free credit, so this stays off unless you choose it. Everything else in Lead Watch is free.
 
 Lead Watch never opens LinkedIn. For leads with no better owner name once their website has been read, it searches Brave for `"Business Name" City site:linkedin.com` and reads the result titles ("Sara Ali - Founder - Smile Clinic | LinkedIn"). A profile counts only if the result mentions the business. Each lead is searched once.
 
@@ -268,7 +302,7 @@ Each test is a plain Python script with asserts, no test runner needed.
 
 ```powershell
 cd pipeline
-foreach ($t in "process","grid","geo","dashboard","backoff","contacts","enrich","linkedin") { ..\.venv\Scripts\python "test_$t.py" }
+foreach ($t in "process","merge","osm","fsq","grid","geo","dashboard","backoff","contacts","enrich","linkedin") { ..\.venv\Scripts\python "test_$t.py" }
 ```
 
 <details>
@@ -282,15 +316,18 @@ pipeline/
   backoff.py             block detection and pause doubling
   enrich.py              polite website reader (robots.txt, one request at a time)
   contacts.py            email, phone, owner name and social link extraction
+  osm.py                 OpenStreetMap places through the Overpass API
+  fsq.py                 Foursquare Open Source Places (optional, read with DuckDB)
   linkedin.py            optional owner names via Brave Search
-  process.py             lead database: ingest, verify emails, dedupe, CSV export
+  process.py             lead database: ingest, cross-source matching, verify emails, dedupe, CSV export
   test_*.py              one assert-based test script per module
 deploy/lead-pipeline.service   systemd unit for 24/7 hosting
 niches.txt, cities.txt         default sectors and locations
+sectors.txt, categories.json   the sector dropdown, and what each sector means on OpenStreetMap and Foursquare
 blocked_domains.txt            domains that are never read
 data/                          leads.db, leads.csv, runner.log, geo/ (git-ignored)
 ```
 
 </details>
 
-See [CHANGELOG.md](CHANGELOG.md) for what changed. Released under the [MIT License](LICENSE). Place data © [GeoNames](https://www.geonames.org/), CC BY 4.0.
+See [CHANGELOG.md](CHANGELOG.md) for what changed. Released under the [MIT License](LICENSE). Place data © [GeoNames](https://www.geonames.org/) (CC BY 4.0), © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL), and [Foursquare Open Source Places](https://huggingface.co/datasets/foursquare/fsq-os-places) (Apache 2.0).

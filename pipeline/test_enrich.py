@@ -69,6 +69,11 @@ assert r["status"] == "timeout" and all(h.endswith("robots.txt") for h in hits)
 r, hits = crawl({"https://smile.ae/robots.txt": httpx.ConnectTimeout("slow")})
 assert r["status"] == "timeout"
 
+# robots.txt that isn't text (a binary file) can't be read -> skip the site, never treat it as "allow all"
+r, hits = crawl({"https://smile.ae/robots.txt": httpx.Response(200, headers={"content-type": "application/octet-stream"},
+                                                               content=b"\x00\x01"), "https://smile.ae/": page("Smile")})
+assert r["status"] == "timeout" and hits == ["https://smile.ae/robots.txt"], (r, hits)
+
 # robots.txt 404 -> everything allowed
 r, _ = crawl({"https://smile.ae/": page("Smile Clinic")})
 assert r["status"] == "ok"
@@ -109,7 +114,14 @@ assert r["status"] == "ok" and r["pages"] == 1 and "https://smile.ae/about" not 
 # not HTML (PDF) -> nothing read, no crash; huge page is capped at 1 MB
 r, _ = crawl({"https://smile.ae/robots.txt": ROBOTS_OK,
               "https://smile.ae/": httpx.Response(200, headers={"content-type": "application/pdf"}, content=b"%PDF")})
-assert r["status"] == "timeout" and r["pages"] == 0
+assert r["status"] == "not_html" and r["pages"] == 0   # a PDF homepage is not a timeout
+r, _ = crawl({"https://smile.ae/robots.txt": ROBOTS_OK,
+              "https://smile.ae/": httpx.Response(200, headers={"content-type": "image/svg+xml"}, text="<svg>x@smile.ae</svg>")})
+assert r["status"] == "not_html" and r["emails"] == {}  # svg+xml is an image, not a readable page
+# an empty JavaScript shell is "empty", not "blocked"
+r, _ = crawl({"https://smile.ae/robots.txt": ROBOTS_OK,
+              "https://smile.ae/": httpx.Response(200, headers=HTML, text="<html><body><div id='root'></div></body></html>")})
+assert r["status"] == "empty", r
 r, _ = crawl({"https://smile.ae/robots.txt": ROBOTS_OK,
               "https://smile.ae/": httpx.Response(200, headers=HTML, text="<p>" + "x" * 3_000_000 + " big@smile.ae</p>")})
 assert r["status"] == "ok" and "big@smile.ae" not in r["emails"]           # beyond the cap, never read
@@ -138,4 +150,21 @@ assert r["owner"] == ("Lina Haddad", "Founder", "Website team page")
 # a bare domain without a scheme still works
 r, _ = crawl({"https://smile.ae/robots.txt": ROBOTS_OK, "https://smile.ae/": page("Smile")}, url="smile.ae")
 assert r["status"] == "ok"
+
+# MX lookups for found emails run off the crawl's event loop, so one slow DNS answer never stalls other sites
+import tempfile, threading
+from pathlib import Path
+import process as p
+con = p.db(Path(tempfile.mkdtemp()) / "t.db")
+con.execute("INSERT INTO leads(place_id, name, website, query) VALUES ('a', 'Smile', 'https://smile.ae', 'AE|dentist|Dubai')")
+lookups = []
+p.dns.resolver.resolve = lambda *a, **k: lookups.append(threading.current_thread().name) or (_ for _ in ()).throw(OSError())
+
+
+async def found(*a):
+    return e.result("ok", emails={"jane@smile-lookup.ae": None})
+real_crawl, e.crawl_site = e.crawl_site, found
+asyncio.run(e.enrich_pending(con, 10, threading.Event()))
+e.crawl_site = real_crawl
+assert lookups and "MainThread" not in lookups, lookups
 print("all checks passed")

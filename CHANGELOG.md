@@ -15,8 +15,10 @@ Kept up to date after every step, so the work can continue from any account or s
 **Sector dropdown and whole-country search: both built** (see Unreleased)
 - 2026-11-20 01:51 IST, Sahil: the dropdown holds about 50 **general** sectors, not 1,000 specific Google categories, kept in the project. The 61-sector list in `sectors.txt` is a first draft for Sahil to correct.
 - 2026-11-20 02:40 IST: whole-country search built. The design, with Sahil's decisions, is in the round-one spec under "Design: whole-country search". Sahil changed the order on the way: **smallest areas first** (villages 1,000–15,000 people, towns to 100,000, cities, states, country) instead of "biggest state, biggest town first"; **single cities always run before any country**; and the user only picks the country, the rest runs by itself.
-- Not tried yet: a live scrape of a village-sized 4 km box (planner, counts and dashboard were checked on real GeoNames data with Nominatim stubbed).
-- **Next:** Phase B (more sources) or the 11 deferred review items, Sahil's call.
+- 2026-11-20: a live scrape of a village-sized 4 km box worked: restaurants in Ar Rams (Ras Al Khaimah) gave 23 places, all inside the box, 22 with a phone; 4 search jobs, none failed, classified "ok".
+- 2026-11-20, Sahil: "add every source and what was remaining", **free only** (no card). Done: OpenStreetMap, Foursquare (built, waiting on Sahil's Hugging Face sign-up), cross-source matching, the sector → category map, all 11 deferred review items and the Brave label. **Tripadvisor is not built:** its first page answered 403 with a DataDome bot check, and bot checks are never bypassed.
+- Not live-tested yet: Foursquare on real data (needs access; a fake-token run confirmed the download path and that a refusal is handled), and a full 24/7 cycle with the new sources inside the running dashboard (OSM was run live against a copy of the database: Dubai dentists gave 28 new leads and 5 matches).
+- **Next:** Sahil's Foursquare sign-up, then `python pipeline/fsq.py check AE` to correct any category labels that match nothing.
 - Not included unless asked: a "new leads only" CSV.
 
 ## Unreleased
@@ -26,15 +28,36 @@ Kept up to date after every step, so the work can continue from any account or s
 - Picking a country shows the size of the job (places per level × sectors, and the fewest days it can take); the run panel shows "Villages · 12 of 3,433 · Uttar Pradesh".
 - Place data from GeoNames (CC BY 4.0): `cities1000`, `admin1CodesASCII` and `countryInfo`, downloaded once (~10 MB) into `data/geo/`. New `pipeline/geo.py` and `pipeline/test_geo.py`.
 
+- **OpenStreetMap as a second source** (free, no account). Each sector × location is one Overpass query: a single city uses its geocoded area, a whole country one area query (split into its places if too big). Only places with a phone, website or email are kept. Busy or unreachable Overpass waits for the next cycle. New `pipeline/osm.py`.
+- **Foursquare Open Source Places** (Apache 2.0, free; needs a one-time Hugging Face form and `HF_TOKEN`). Each country is copied once into `data/fsq/<CC>.parquet` with DuckDB; queries after that are local. Off, and labeled so on the dashboard, until the token is set. `python pipeline/fsq.py check CC` lists category labels that match nothing. New `pipeline/fsq.py`; `duckdb` added to `requirements.txt` (needed only for Foursquare).
+- **Cross-source matching.** One lead per business, whichever source finds it first: same phone (landlines too), or same website domain (each within 500 m, so chain branches stay apart), or a name 85% alike within 150 m. A shared phone never joins two places whose websites differ (in the live run, two clinics in one building shared a reception number). A match fills empty fields only; a Google listing that finds an OSM/Foursquare lead takes it over, keeping one row. Existing leads get their match keys once, from stored data. New `lead_sources` table.
+- **`categories.json`:** what each of the 61 sectors means on OpenStreetMap (every tag checked against taginfo usage) and Foursquare (label keywords, not yet checked on real data).
+- **Dashboard:** OpenStreetMap and Foursquare cells (leads from each, last cycle's new and matched, or why it is off).
+- `data/ATTRIBUTION.txt` is written next to `leads.csv` (OpenStreetMap ODbL, Foursquare Apache 2.0, GeoNames CC BY).
+
 ### Changed
+- **Sources column** lists every source that found a lead (`google_maps osm`).
+- **LinkedIn box** says Brave's API needs a card, instead of only "add BRAVE_API_KEY".
 - **Sector dropdown.** In "What to scrape", the country comes first; once one is chosen, a **Sectors** dropdown appears with the general sectors from `sectors.txt` (edit that file to change the list). Picking one adds it as a removable chip and greys it out in the list; "Or type your own" still takes any sector. Every sector is still searched in every location.
+
+### Fixed (deferred review items)
+- Email MX lookups no longer run inside the website reader's event loop, so one slow DNS answer cannot stall other sites.
+- A resumed run keeps the depth and concurrency it started with, even if the settings changed.
+- Pressing Stop while the next run is being planned no longer launches the scraper once.
+- A scraper container left behind by a crash is removed before the next launch (it blocked the name).
+- `data/state.json` is written atomically and under a lock, so the loop and the dashboard never lose each other's changes.
+- Site labels: a PDF homepage is "not_html" (was "timeout"), `image/svg+xml` is no longer read as a page, and a JavaScript-only page is "empty" (was "blocked"). "Websites read" counts every site a request went to.
+- Cloudflare challenge pages that carry only `_cf_chl_opt` are recognized.
+- `sites.google.com` business websites are read (they were treated as Google pages).
+- A kept run whose location (or every sector) was removed from the targets is dropped instead of resumed.
+- README and changelog describe the block score as it works (+1 per block, −0.5 per clean run, stop at 4), not "four blocks in a row". The README notes how to strip the WhatsApp column's spaces for `wa.me` links.
 
 ## 2026-11-20: Phase A — grid search, resume, website reading, back-off, LinkedIn via Brave
 
 ### Added
 - **Grid search.** Locations up to 2,500 km² are geocoded once (OpenStreetMap Nominatim, cached) and searched as a grid of 4 km cells (`GRID_CELL_KM`), getting past Google's ~120-places-per-search limit. Bigger areas use plain searches.
 - **Resume.** A run interrupted by Stop, a crash, a reboot or a block continues where it left off (`-resume`), instead of starting over. A run that crashes three times is dropped and its searches stay queued.
-- **Block back-off and auto-stop.** Empty runs, mostly failed searches or Google's "unusual traffic" page count as a block. The pause doubles up to 4 hours, and four blocks in a row stop the loop with a clear message.
+- **Block back-off and auto-stop.** Empty runs, mostly failed searches or Google's "unusual traffic" page count as a block. The pause doubles up to 4 hours. Each block adds 1 to a block score and each clean run takes 0.5 off; at 4 the loop stops with a clear message.
 - **Polite website reading.** Up to 300 sites per cycle (`ENRICH_PER_CYCLE`), each read once: robots.txt and Crawl-delay obeyed, 1–2 s between pages, at most 4 pages (home plus contact/about/team, with a sitemap fallback), 1 MB per page, a bounded number of retries, and any bot-check page skipped. It finds emails (including "name [at] domain" forms and named mailto links), phones, social profiles and owner names (from structured data or team pages).
 - **LinkedIn names via Brave Search** (optional, `BRAVE_API_KEY`). LinkedIn itself is never opened. Capped per month (`BRAVE_MONTHLY_CAP`, default 1000) and per cycle (`LINKEDIN_PER_CYCLE`, 30), and it stops on Brave's limit responses.
 - `blocked_domains.txt`: website domains never read (government and health-service sites by default).
