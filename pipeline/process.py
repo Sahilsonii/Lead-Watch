@@ -29,9 +29,17 @@ JUNK_RE = re.compile(r"\.(png|jpe?g|gif|webp|svg)$|@(example|domain|email|yourdo
 WHATSAPP_TYPES = {T.MOBILE, T.FIXED_LINE_OR_MOBILE}
 
 
-def db():
+def ensure_columns(con, table, cols):
+    """Add missing columns, so older databases keep working as the schema grows."""
+    have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+    for name, kind in cols.items():
+        if name not in have:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+
+
+def db(path=None):
     DATA.mkdir(exist_ok=True)
-    con = sqlite3.connect(DATA / "leads.db")
+    con = sqlite3.connect(path or DATA / "leads.db")
     con.executescript("""
         CREATE TABLE IF NOT EXISTS queries(q TEXT PRIMARY KEY, done_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS leads(
@@ -39,9 +47,10 @@ def db():
             website TEXT, phone TEXT, phone_e164 TEXT, maps_link TEXT, rating REAL, reviews INTEGER,
             email TEXT, email_status TEXT, whatsapp INTEGER, query TEXT,
             scraped_at TEXT DEFAULT CURRENT_TIMESTAMP, raw TEXT);
+        CREATE TABLE IF NOT EXISTS locations(
+            name TEXT, cc TEXT, bbox TEXT, area_km2 REAL, PRIMARY KEY(name, cc));
     """)
-    if "raw" not in {r[1] for r in con.execute("PRAGMA table_info(leads)")}:
-        con.execute("ALTER TABLE leads ADD COLUMN raw TEXT")  # databases from before the 18-column export
+    ensure_columns(con, "leads", {"raw": "TEXT"})  # databases from before the 18-column export
     return con
 
 
@@ -150,8 +159,9 @@ def read_entries(path):
     return [json.loads(l) for l in text.splitlines() if l.strip()]  # JSON Lines
 
 
-def ingest(path, mark_done=True):
-    """Upsert places by Google place id (so re-scrapes never duplicate). Returns (new, duplicates)."""
+def ingest(path, done_keys=()):
+    """Upsert places by Google place id (so re-scrapes never duplicate), then mark done_keys searched.
+    Returns (new, duplicates)."""
     con = db()
     new = dup = 0
     for e in read_entries(path):
@@ -178,11 +188,7 @@ def ingest(path, mark_done=True):
              (e.get("complete_address") or {}).get("country"), e.get("web_site"), e.get("phone"),
              phone_e164, e.get("link"), e.get("review_rating"), e.get("review_count"),
              email, status, e.get("input_id"), json.dumps(e)))
-    if mark_done:
-        # shortcut: marks the whole batch done once the scraper exits cleanly, even if Google blocked
-        # part of it; upgrade to per-query tracking if you see many empty batches.
-        con.executemany("INSERT OR IGNORE INTO queries(q) VALUES (?)",
-                        [(q,) for q in lines("data/batch.txt")])
+    con.executemany("INSERT OR IGNORE INTO queries(q) VALUES (?)", [(k,) for k in done_keys])
     con.commit()
     return new, dup
 
@@ -285,7 +291,7 @@ if __name__ == "__main__":
     if cmd == "next-batch":
         print(next_batch(int(sys.argv[2])))
     elif cmd == "ingest":
-        print("new %d, duplicates %d" % ingest(sys.argv[2]))
+        print("new %d, duplicates %d" % ingest(sys.argv[2], [q.split(" #!#")[0] for q in lines("data/batch.txt")]))
     elif cmd == "export":
         print(f"exported {export()} leads to data/leads.csv")
     else:

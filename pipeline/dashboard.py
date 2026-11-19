@@ -90,7 +90,8 @@ class Runner:
             return
         self.phase = "verifying emails"
         # Stopped or crashed mid-run: keep what was found, but leave the searches queued for a retry.
-        new, dup = p.ingest(out, mark_done=(code == 0 and not self.stop.is_set()))
+        done = [q.split(" #!#")[0] for q in p.lines("data/batch.txt")] if code == 0 and not self.stop.is_set() else []
+        new, dup = p.ingest(out, done)
         p.export()
         state = load_state()
         save_state(dups_total=state.get("dups_total", 0) + dup,
