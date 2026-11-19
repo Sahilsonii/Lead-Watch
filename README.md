@@ -10,6 +10,7 @@ Pick sectors and locations, press **Start**, and Lead Watch scrapes Google Maps,
 ![Docker](https://img.shields.io/badge/needs-Docker-2496ED?logo=docker&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/dependencies-3-brightgreen)
 ![Dashboard](https://img.shields.io/badge/dashboard-localhost%3A8765-orange)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
 [Quick start](#-quick-start) · [How it works](#-how-it-works) · [Dashboard](#-the-dashboard) · [Export](#-what-you-get) · [Settings](#%EF%B8%8F-settings) · [24/7 hosting](#%EF%B8%8F-run-it-247-for-free) · [Staying safe](#%EF%B8%8F-staying-safe)
 
@@ -275,4 +276,4 @@ data/                          leads.db, leads.csv, runner.log (git-ignored)
 
 </details>
 
-See [CHANGELOG.md](CHANGELOG.md) for what changed.
+See [CHANGELOG.md](CHANGELOG.md) for what changed. Released under the [MIT License](LICENSE).
