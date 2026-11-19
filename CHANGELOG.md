@@ -19,7 +19,8 @@ Agreed with Sahil so far:
 - Order: the biggest state (by population) first; inside each state, the biggest town first; one town per run with all sectors. Existing single cities stay; a town already listed is searched once. GeoNames neighborhood entries are skipped.
 - The dashboard shows the counts when a country is picked (states, towns, × sectors = searches), and the Run & health panel shows "state N of M, town N of M".
 - Each town is geocoded and grid-searched like Phase A.
-- The sectors text box becomes a dropdown that opens after a country is chosen and covers as many business types as possible (the source of that list is being decided).
+- The sectors text box becomes a dropdown that opens after a country is chosen.
+- 2026-11-20 01:51 IST, Sahil: the dropdown holds about 50 **general** sectors (food, restaurants, pubs, plumbing…), not 1,000 specific Google categories. The list is kept in the project; no outside category list is used. A draft list was proposed in chat; waiting for Sahil's corrections, then the full design is written up and reviewed.
 - Not included unless asked: a "new leads only" CSV.
 
 ## 2026-11-20: Phase A — grid search, resume, website reading, back-off, LinkedIn via Brave
