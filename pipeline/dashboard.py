@@ -4,7 +4,8 @@ Run: python pipeline/dashboard.py  ->  http://localhost:8765
 Knobs (env): CONCURRENCY (2), PAUSE_MIN (rest between cycles, 30), DEPTH (scroll depth per search, 10),
 GRID_CELL_KM (4), ENRICH_PER_CYCLE (websites read per cycle, 300), LINKEDIN_PER_CYCLE (Brave searches, 30),
 BRAVE_API_KEY (optional; enables LinkedIn names), BRAVE_MONTHLY_CAP (1000), OSM_PER_CYCLE (Overpass queries, 20),
-FSQ_PER_CYCLE (Foursquare reads, 20), HF_TOKEN (optional; enables Foursquare after its free Hugging Face sign-up).
+FSQ_PER_CYCLE (Foursquare reads, 20), HF_TOKEN (optional; enables Foursquare after its free Hugging Face sign-up),
+OVERTURE_PER_CYCLE (Overture Maps reads, 20; free, no account).
 """
 import asyncio
 import json
@@ -23,6 +24,7 @@ import phonenumbers
 import backoff
 import enrich
 import fsq
+import overture
 import geo
 import grid
 import linkedin
@@ -40,7 +42,8 @@ PAUSE_MIN = float(os.environ.get("PAUSE_MIN", 30))
 ENRICH_PER_CYCLE = int(os.environ.get("ENRICH_PER_CYCLE", 300))
 LINKEDIN_PER_CYCLE = int(os.environ.get("LINKEDIN_PER_CYCLE", 30))
 OSM_PER_CYCLE = int(os.environ.get("OSM_PER_CYCLE", 20))
-FSQ_PER_CYCLE = int(os.environ.get("FSQ_PER_CYCLE", 20))  # spreads the monthly Brave credit over many cycles
+FSQ_PER_CYCLE = int(os.environ.get("FSQ_PER_CYCLE", 20))
+OVERTURE_PER_CYCLE = int(os.environ.get("OVERTURE_PER_CYCLE", 20))  # spreads the monthly Brave credit over many cycles
 PAGE = (Path(__file__).parent / "dashboard.html").read_bytes()
 STATE_FILE = p.DATA / "state.json"
 COUNTRIES = sorted(phonenumbers.SUPPORTED_REGIONS)
@@ -173,7 +176,7 @@ class Runner:
         self.phase = backoff.STOP_MESSAGE if auto_stopped else "resting"
 
     def enrich_cycle(self, scraped):
-        """Add places from OpenStreetMap and Foursquare, read business websites, search Brave for missing owners,
+        """Add places from OpenStreetMap, Foursquare and Overture Maps, read business websites, search Brave for missing owners,
         then rewrite the CSV. Runs even while Google is blocking: these are other hosts."""
         if self.stop.is_set():
             return
@@ -182,7 +185,8 @@ class Runner:
         self.phase = "adding other sources"
         with httpx.Client() as client:
             self.sources = {"osm": osm.run_pending(con, client, OSM_PER_CYCLE, self.stop),
-                            "foursquare": fsq.run_pending(con, client, FSQ_PER_CYCLE, self.stop)}
+                            "foursquare": fsq.run_pending(con, client, FSQ_PER_CYCLE, self.stop),
+                            "overture": overture.run_pending(con, client, OVERTURE_PER_CYCLE, self.stop)}
         added = any(s.get("new") or s.get("merged") for s in self.sources.values())
         self.phase = "reading websites"
         crawled = asyncio.run(enrich.enrich_pending(con, ENRICH_PER_CYCLE, self.stop)).get("crawled")
@@ -283,7 +287,8 @@ def stats():
         "linkedin": {"used": used, "cap": cap} if os.environ.get("BRAVE_API_KEY") else {"skipped": "no BRAVE_API_KEY"},
         "sources": {"osm": one("SELECT COUNT(*) FROM leads WHERE instr(sources, 'osm')"),
                     "foursquare": one("SELECT COUNT(*) FROM leads WHERE instr(sources, 'foursquare')"),
-                    "last": runner.sources,  # typed-in sectors with no categories.json entry skip both sources
+                    "overture": one("SELECT COUNT(*) FROM leads WHERE instr(sources, 'overture')"),
+                    "last": runner.sources,  # typed-in sectors with no categories.json entry skip these sources
                     "unmapped": [s for s in grid.targets()[0] if s not in osm.categories()]},
         "running": runner.thread is not None and runner.thread.is_alive(),
         "phase": runner.phase,

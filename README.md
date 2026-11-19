@@ -2,9 +2,9 @@
 
 # 🛰️ Lead Watch
 
-**Google Maps + OpenStreetMap + Foursquare → verified, deduplicated business leads, 24/7.**
+**Google Maps + OpenStreetMap + Overture Maps + Foursquare → verified, deduplicated business leads, 24/7.**
 
-Pick sectors and locations, press **Start**, and Lead Watch scrapes Google Maps, adds free open-data places from OpenStreetMap (and Foursquare, once you sign up), reads each business's own website for contacts and owner names, verifies emails, and exports clean leads to `data/leads.csv`.
+Pick sectors and locations, press **Start**, and Lead Watch scrapes Google Maps, adds free open-data places from OpenStreetMap and Overture Maps (and Foursquare, once you sign up), reads each business's own website for contacts and owner names, verifies emails, and exports clean leads to `data/leads.csv`.
 
 ![Python](https://img.shields.io/badge/python-3-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/needs-Docker-2496ED?logo=docker&logoColor=white)
@@ -52,7 +52,7 @@ flowchart LR
     A["📍 Pick next location<br/>with sectors left"] --> B["🗺️ Scrape Google Maps<br/>gosom scraper in Docker<br/>4 km grid for cities"]
     B --> C{"🚦 Google<br/>blocking?"}
     C -- yes --> P["⏸️ Back off<br/>30, 60, 120, 240 min<br/>stop at block score 4"]
-    C -- no --> S["🧭 Add places from<br/>OpenStreetMap, Foursquare<br/>matched to existing leads"]
+    C -- no --> S["🧭 Add places from<br/>OpenStreetMap, Overture,<br/>Foursquare, matched to<br/>existing leads"]
     P --> S
     S --> D["🌐 Read business websites<br/>robots.txt first, max 4 pages"]
     D --> E["🔎 Owner names via<br/>Brave Search, optional"]
@@ -67,7 +67,7 @@ flowchart LR
 1. **Pick** the next location that still has sectors to search. Single cities always come first, then any [whole country](#-whole-country-search), place by place.
 2. **Scrape** it with [gosom/google-maps-scraper](https://github.com/gosom/google-maps-scraper) in Docker. A location up to 2,500 km² (a city or district) is searched as a **grid** of 4 km cells, which finds far more than the ~120 places Google returns for one search. Bigger areas (states, whole countries) fall back to one plain search per sector.
 3. **Check** whether Google is blocking the IP, and back off if so ([details](#-when-google-blocks)).
-4. **Add** places from OpenStreetMap and Foursquare for the same sectors and locations ([other sources](#-other-sources)). This runs even while Google is blocking, because it uses other hosts.
+4. **Add** places from OpenStreetMap, Foursquare and Overture Maps for the same sectors and locations ([other sources](#-other-sources)). This runs even while Google is blocking, because it uses other hosts.
 5. **Read** up to 300 business websites politely: robots.txt first, one page at a time per site, 1–2 s apart, at most 4 pages each (home, contact, about, team).
 6. **Look up** missing owner names through Brave Search, if you turned it on ([LinkedIn names](#-linkedin-names-optional)).
 7. **Export** every lead with a verified email or a mobile number, best leads first.
@@ -79,7 +79,7 @@ flowchart LR
 | Level | Rule |
 |---|---|
 | **Searches** | A sector × location runs once, ever. Grid and plain searches are tracked separately. |
-| **Places** | Stored by Google place id, so a business found by two searches is saved once. A place from OpenStreetMap or Foursquare joins an existing lead when the phone matches or the website domain matches (each within 500 m, so chain branches stay apart), or when the name is 85% alike within 150 m. A shared phone never joins two places with different websites (one building, one reception, two clinics). It only fills empty fields; Google's values win. |
+| **Places** | Stored by Google place id, so a business found by two searches is saved once. A place from OpenStreetMap, Foursquare or Overture joins an existing lead when the phone matches or the website domain matches (each within 500 m, so chain branches stay apart), or when the name is 85% alike within 150 m. A shared phone never joins two places with different websites (one building, one reception, two clinics), and a shared website never joins two places with different phones (hotels of one brand, restaurants on one booking site). WhatsApp, Telegram, short links, Google Sites and booking platforms never count as a website. It only fills empty fields; Google's values win. |
 | **Websites** | Each site is read once, ever. Leads that share a website (a chain) share one read. |
 | **Contacts** | In the export, a repeated email or phone (chains, duplicate listings) appears once. |
 
@@ -128,7 +128,7 @@ Place data comes from [GeoNames](https://www.geonames.org/) (CC BY 4.0), downloa
 - **Phone** and **WhatsApp** use each country's standard grouping with the country code (`+971 4 566 2262`, `+44 20 7946 0958`, `+1 416-555-0199`), however Google wrote them. A number that can't be parsed is left as it was.
 - **WhatsApp** is the mobile number. It is likely on WhatsApp but not checked. It keeps its spaces for reading; strip them and the `+` for a `wa.me/` link: `+971 50 123 4567` → `wa.me/971501234567`.
 - **Website** is empty when the Maps "website" is really a Facebook, Instagram or directory page; that link moves to **Social Links**, with the Instagram, Facebook, LinkedIn and other profiles found on the site.
-- **Sources** lists every source that found the lead: `google_maps`, `osm`, `foursquare` (for example `google_maps osm`). Leads found only through OpenStreetMap or Foursquare have no Google reviews or rating; their verdict uses the other signals.
+- **Sources** lists every source that found the lead: `google_maps`, `osm`, `foursquare`, `overture` (for example `google_maps overture`). Leads found only through the other sources have no Google reviews or rating; their verdict uses the other signals.
 - **Postcode / City** are empty where Google has none (for example the UAE). City then falls back to the searched location.
 
 </details>
@@ -179,6 +179,7 @@ Set these as environment variables before starting the dashboard.
 | `OVERPASS_URL` | overpass-api.de | Another Overpass server, if that one is busy |
 | `HF_TOKEN` | (none) | Turns on Foursquare (see [other sources](#-other-sources)) |
 | `FSQ_PER_CYCLE` | 20 | Foursquare reads per cycle |
+| `OVERTURE_PER_CYCLE` | 20 | Overture Maps reads per cycle |
 | `BRAVE_API_KEY` | (none) | Turns on LinkedIn name lookups (Brave asks for a card) |
 | `BRAVE_MONTHLY_CAP` | 1000 | Hard cap on Brave searches per month |
 | `SMTP_CHECK` | off | `1` adds an SMTP mailbox check |
@@ -204,7 +205,7 @@ Each blocked run adds 1 to a **block score**; each clean run takes 0.5 off (neve
 | 3rd block and later | 240 min (the cap) |
 | Block score reaches 4 | **Loop stops itself** |
 
-At a score of 4 the dashboard says "Google is blocking this IP. Stopped to protect it." Wait a day or move to another IP, then press Start. An interrupted run (Stop, crash, reboot, block) resumes where it left off rather than starting over. OpenStreetMap, Foursquare, website reading and LinkedIn lookups keep going while Google blocks, because they use other hosts.
+At a score of 4 the dashboard says "Google is blocking this IP. Stopped to protect it." Wait a day or move to another IP, then press Start. An interrupted run (Stop, crash, reboot, block) resumes where it left off rather than starting over. OpenStreetMap, Overture, Foursquare, website reading and LinkedIn lookups keep going while Google blocks, because they use other hosts.
 
 If anything else fails (for example `leads.csv` is open in Excel), the loop writes the error to `data/runner.log`, shows it on the dashboard, and tries again after the pause.
 
@@ -213,11 +214,13 @@ If anything else fails (for example `leads.csv` is open in Excel), the loop writ
 ### 🧭 Other sources
 
 <details>
-<summary><b>OpenStreetMap, Foursquare, and why not Tripadvisor</b></summary>
+<summary><b>OpenStreetMap, Overture Maps, Foursquare, and why not Tripadvisor</b></summary>
 
-Both sources are free and need no card. They search the same sectors and locations as Google, mapped to their own categories in [`categories.json`](categories.json) (edit it to change what a sector means there). Only places with a phone, website or email are kept, and each one is [matched](#%EF%B8%8F-dedupe-is-always-on) to the leads already saved.
+All three are free and need no card. They search the same sectors and locations as Google, mapped to their own categories in [`categories.json`](categories.json) (edit it to change what a sector means there). Only places with a phone, website or email are kept, and each one is [matched](#%EF%B8%8F-dedupe-is-always-on) to the leads already saved.
 
 **OpenStreetMap** (on by default, no account). Queried through the public Overpass API, one query per sector and location, 2 s apart. A single city uses its geocoded area; a whole country is one query, split into its towns and cities when Overpass says it is too big. When Overpass is busy, OSM waits for the next cycle. Data © OpenStreetMap contributors, [ODbL](https://www.openstreetmap.org/copyright): a database you build from it and share must stay under the ODbL.
+
+**Overture Maps** (on by default, no account). Overture's open places data (CDLA Permissive 2.0, mostly from Meta and Microsoft) is read with DuckDB straight from its public bucket: the first read of a country copies its open places into `data/overture/<CC>.parquet` (the UAE: about 30 s and 20 MB), and every query after that is local. Places Overture itself rates below 0.5 confidence are skipped. `python pipeline/overture.py check AE` lists category ids in `categories.json` that match no place. In a live test, Dubai dentists gave 661 new leads (472 with an email) on top of 111 from Google.
 
 **Foursquare Open Source Places** (Apache 2.0, off until you sign up). The data sits on Hugging Face behind a one-time form:
 
@@ -302,7 +305,7 @@ Each test is a plain Python script with asserts, no test runner needed.
 
 ```powershell
 cd pipeline
-foreach ($t in "process","merge","osm","fsq","grid","geo","dashboard","backoff","contacts","enrich","linkedin") { ..\.venv\Scripts\python "test_$t.py" }
+foreach ($t in "process","merge","osm","fsq","overture","grid","geo","dashboard","backoff","contacts","enrich","linkedin") { ..\.venv\Scripts\python "test_$t.py" }
 ```
 
 <details>
@@ -318,16 +321,17 @@ pipeline/
   contacts.py            email, phone, owner name and social link extraction
   osm.py                 OpenStreetMap places through the Overpass API
   fsq.py                 Foursquare Open Source Places (optional, read with DuckDB)
+  overture.py            Overture Maps places (read with DuckDB from the public bucket)
   linkedin.py            optional owner names via Brave Search
   process.py             lead database: ingest, cross-source matching, verify emails, dedupe, CSV export
   test_*.py              one assert-based test script per module
 deploy/lead-pipeline.service   systemd unit for 24/7 hosting
 niches.txt, cities.txt         default sectors and locations
-sectors.txt, categories.json   the sector dropdown, and what each sector means on OpenStreetMap and Foursquare
+sectors.txt, categories.json   the sector dropdown, and what each sector means on OpenStreetMap, Foursquare and Overture
 blocked_domains.txt            domains that are never read
 data/                          leads.db, leads.csv, runner.log, geo/ (git-ignored)
 ```
 
 </details>
 
-See [CHANGELOG.md](CHANGELOG.md) for what changed. Released under the [MIT License](LICENSE). Place data © [GeoNames](https://www.geonames.org/) (CC BY 4.0), © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL), and [Foursquare Open Source Places](https://huggingface.co/datasets/foursquare/fsq-os-places) (Apache 2.0).
+See [CHANGELOG.md](CHANGELOG.md) for what changed. Released under the [MIT License](LICENSE). Place data © [GeoNames](https://www.geonames.org/) (CC BY 4.0), © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL), [Foursquare Open Source Places](https://huggingface.co/datasets/foursquare/fsq-os-places) (Apache 2.0), and [Overture Maps](https://overturemaps.org) (CDLA Permissive 2.0).

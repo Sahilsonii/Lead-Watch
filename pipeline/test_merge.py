@@ -66,6 +66,13 @@ assert p.ingest_source(con, "osm", [osm("node/20", "Dental Zone", phone="04 338 
 assert p.ingest_source(con, "osm", [osm("node/21", "Medicazone", phone="+971 4 338 3100", site="https://medicazoneclinic.com/",
                                         lat=25.6, lon=55.6)]) == (1, 0)
 
+# one brand's website, two hotels 300 m apart with their own numbers -> two leads; a booking platform is no key at all
+assert p.ingest_source(con, "osm", [osm("node/30", "Burj Al Arab", phone="04 301 7777", site="https://www.jumeirah.com/burj",
+                                        lat=25.141, lon=55.185)]) == (1, 0)
+assert p.ingest_source(con, "osm", [osm("node/31", "Jumeirah Beach Hotel", phone="04 348 0000", site="https://jumeirah.com/jbh",
+                                        lat=25.1437, lon=55.1855)]) == (1, 0)
+assert p.site_domain("https://www.zomato.com/dubai/x") is None and p.site_domain("https://sites.google.com/view/x") is None
+
 # website domain match (www vs bare), no phone on either side
 load(google("g2", "Lina Clinic", site="https://www.lina.ae/", lat=25.1000, lon=55.1000))
 assert p.ingest_source(con, "osm", [osm("node/3", "Dr Lina", site="lina.ae", lat=25.1001, lon=55.1000)]) == (0, 1)

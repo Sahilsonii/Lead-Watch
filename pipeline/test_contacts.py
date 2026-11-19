@@ -60,6 +60,8 @@ assert c.social_links(page('<a href="https://instagram.com/smile">IG</a><a href=
 assert c.is_aggregator("https://m.facebook.com/smile")
 assert c.is_aggregator("https://www.google.ae/maps/place/x")
 assert not c.is_aggregator("https://smile.ae")
+assert all(c.is_aggregator(u) for u in ("https://wa.me/971501234567", "https://maps.app.goo.gl/x", "https://bit.ly/x",
+                                        "https://api.whatsapp.com/send?phone=1", "https://t.me/x"))
 assert c.is_blocked_domain("https://dha.gov.ae", [".gov.ae"])
 assert c.is_blocked_domain("https://www.nhs.uk", [".nhs.uk"])
 assert not c.is_blocked_domain("https://smile.ae", c.load_blocked_domains())

@@ -253,7 +253,11 @@ KEYWORDS = ("contact", "about", "team", "our-doctors", "doctors", "staff", "lead
             "enquiry", "get-in-touch", "reach-us", "book")
 SOCIAL_HOSTS = ("instagram.com", "facebook.com", "linkedin.com", "tiktok.com", "youtube.com", "x.com", "twitter.com")
 AGGREGATOR_HOSTS = SOCIAL_HOSTS + ("yelp.com", "tripadvisor.com", "trustpilot.com", "pinterest.com", "glassdoor.com",
-                                   "indeed.com", "g.page", "linktr.ee")
+                                   "indeed.com", "g.page", "linktr.ee",
+                                   # shared link hosts, many businesses each (seen as "websites" in Overture's UAE data)
+                                   "wa.me", "wa.link", "whatsapp.com", "t.me", "snapchat.com", "goo.gl", "g.co", "bit.ly",
+                                   "youtu.be", "share.google", "talabat.com", "zomato.com", "chatfood.io",
+                                   "sevenrooms.com", "fresha.com", "auto.ae", "parkopedia.com", "wikipedia.org")
 GOOGLE_RE = re.compile(r"(^|\.)google\.[a-z.]+$")
 
 

@@ -209,10 +209,12 @@ def phone_key(phone, region):
 
 
 def site_domain(url):
-    """'https://www.Smile.ae/x' -> 'smile.ae'. None for Facebook, directories and Google pages: shared, not the business's."""
+    """'https://www.Smile.ae/x' -> 'smile.ae'. None for Facebook, directories, Google pages and Google Sites: shared
+    hosts, not one business's."""
     url = (url or "").strip()
     url = url if "://" in url else "https://" + url
-    return None if contacts.is_aggregator(url) else contacts.host(url) or None
+    h = contacts.host(url)
+    return None if contacts.is_aggregator(url) or h == "sites.google.com" else h or None
 
 
 def match_keys(e):
@@ -229,15 +231,18 @@ def meters(lat1, lon1, lat2, lon2):
 
 def find_match(con, name, k, google=False):
     """place_id of the lead this place already is, or None: the same phone, then the same website, each within
-    500 m when both have coordinates, then a name at least 85% alike within 150 m. A Google listing only takes over
+    500 m when both have coordinates, then a name at least 85% alike within 150 m. A shared phone with two different
+    websites, or a shared website with two different phones, is two businesses. A Google listing only takes over
     leads no Google listing has: two Google ids are two places."""
     only = " AND instr(COALESCE(sources, 'google_maps'), 'google_maps') = 0" if google else ""
     for col in ("phone_any", "domain"):
         if k[col]:
-            for place_id, lat, lon, domain in con.execute(
-                    f"SELECT place_id, lat, lon, domain FROM leads WHERE {col} = ?{only}", (k[col],)).fetchall():
+            for place_id, lat, lon, domain, phone in con.execute(
+                    f"SELECT place_id, lat, lon, domain, phone_any FROM leads WHERE {col} = ?{only}", (k[col],)).fetchall():
                 if k["domain"] and domain and k["domain"] != domain:
                     continue  # one building's shared reception number, two businesses with their own websites
+                if k["phone_any"] and phone and k["phone_any"] != phone:
+                    continue  # one group's website (hotels of one brand, a booking platform), two numbers
                 d = meters(k["lat"], k["lon"], lat, lon)
                 if d is None or d <= MATCH_PHONE_SITE_M:
                     return place_id
@@ -500,6 +505,8 @@ ATTRIBUTION = """Data sources for leads.csv (see its Sources column)
 osm: (c) OpenStreetMap contributors, available under the Open Database License (ODbL 1.0).
      https://www.openstreetmap.org/copyright. A database made from it that you share must stay under the ODbL.
 foursquare: Foursquare Open Source Places, Apache License 2.0. https://huggingface.co/datasets/foursquare/fsq-os-places
+overture: Overture Maps Foundation places, CDLA Permissive 2.0 (some records from Foursquare, Apache 2.0, and
+     All the Places, CC0 1.0). https://overturemaps.org
 Place lists for whole-country search: GeoNames (geonames.org), CC BY 4.0.
 """
 

@@ -104,12 +104,13 @@ d.enrich.enrich_pending = fake_enrich
 d.linkedin.lookup_pending = lambda con, client, limit, stop: order.append("linkedin") or {}
 d.osm.run_pending = lambda con, client, limit, stop: order.append("osm") or {"new": 0, "merged": 0}
 d.fsq.run_pending = lambda con, client, limit, stop: order.append("fsq") or {"new": 0, "merged": 0, "skipped": "no HF_TOKEN"}
+d.overture.run_pending = lambda con, client, limit, stop: order.append("overture") or {"new": 0, "merged": 0}
 r = d.Runner()
 d.p.export = lambda: order.append("export") or r.stop.set()
 r.scrape_once = lambda run, resume: order.append("scrape")
 d.save_state(run=saved, running=True)
 r.loop()
-assert order == ["scrape", "osm", "fsq", "enrich", "linkedin", "export"], order  # new places get their sites read
+assert order == ["scrape", "osm", "fsq", "overture", "enrich", "linkedin", "export"], order  # new places get their sites read
 assert r.sources["foursquare"]["skipped"] == "no HF_TOKEN"
 
 # run panel: grid cells = rows x columns of the bbox, per sector; done = finished Maps search jobs in the log

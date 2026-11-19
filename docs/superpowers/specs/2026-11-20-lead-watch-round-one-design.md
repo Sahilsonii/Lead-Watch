@@ -223,6 +223,7 @@ Sahil wants LinkedIn data "with the safest and without login way" (2026-11-20). 
 
 - Direction: A first, then B (2026-11-20).
 - Leads are stored only; outreach is out of scope.
+- **Overture Maps added** as a fourth source (2026-11-20): free, no account, read with DuckDB from the public bucket.
 - WhatsApp checks are skipped. Mobiles are flagged as "likely WhatsApp".
 - Dedupe is always on.
 - The 18-column export (order and names).
