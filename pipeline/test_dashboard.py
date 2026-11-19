@@ -87,4 +87,29 @@ d.save_state(blocks={"google": {"score": 3, "pause_min": 240, "stopped": False, 
 r = d.Runner()
 r.scrape_once(saved, resume=False)
 assert r.stop.is_set() and r.phase == d.backoff.STOP_MESSAGE and d.load_state()["running"] is False
+
+# cycle order: scrape -> enrich websites -> LinkedIn lookups -> export, then rest
+order = []
+
+
+async def fake_enrich(con, limit, stop):
+    order.append("enrich")
+    return {"crawled": 0, "names": 0, "blocked": 0}
+d.enrich.enrich_pending = fake_enrich
+d.linkedin.lookup_pending = lambda con, client, limit, stop: order.append("linkedin") or {}
+r = d.Runner()
+d.p.export = lambda: order.append("export") or r.stop.set()
+r.scrape_once = lambda run, resume: order.append("scrape")
+d.save_state(run=saved, running=True)
+r.loop()
+assert order == ["scrape", "enrich", "linkedin", "export"], order
+
+# run panel: grid cells = rows x columns of the bbox, per sector; done = finished Maps search jobs in the log
+log = '{"message":"job finished","job":"Job{URL: https://www.google.com/maps/search/a}","status":"success"}\n' * 3
+info = d.run_info({**grid_run, "location": "Dubai", "inputs": ["a", "b"]}, log)
+assert info["cells_total"] == 2 * d.math.ceil(0.3 * 111.32 / 4) * d.math.ceil(0.3 * 111.32 * d.math.cos(d.math.radians(25.15)) / 4)
+assert info["cells_done"] == 3 and info["mode"] == "grid" and 900 < info["area_km2"] < 1100, info
+plain_info = d.run_info({"location": "London", "mode": "plain", "bbox": None, "cell_km": None, "inputs": ["a"]}, "")
+assert plain_info["cells_total"] is None and plain_info["area_km2"] is None
+assert d.run_info(None, "") is None
 print("all checks passed")

@@ -2,9 +2,12 @@
 
 Run: python pipeline/dashboard.py  ->  http://localhost:8765
 Knobs (env): CONCURRENCY (2), PAUSE_MIN (rest between cycles, 30), DEPTH (scroll depth per search, 10),
-GRID_CELL_KM (4).
+GRID_CELL_KM (4), ENRICH_PER_CYCLE (websites read per cycle, 300), LINKEDIN_PER_CYCLE (Brave searches, 30),
+BRAVE_API_KEY (optional; enables LinkedIn names), BRAVE_MONTHLY_CAP (1000).
 """
+import asyncio
 import json
+import math
 import os
 import subprocess
 import threading
@@ -12,10 +15,13 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import httpx
 import phonenumbers
 
 import backoff
+import enrich
 import grid
+import linkedin
 import process as p
 
 PORT = 8765
@@ -26,6 +32,8 @@ DEPTH = int(os.environ.get("DEPTH", 10))  # ~120 places per search; lower it if 
 ZOOM = 15  # gosom's default; its README gives no separate value for grid mode
 MAX_RESUMES = 2  # a run that keeps crashing is dropped; its searches stay queued for a fresh try
 PAUSE_MIN = float(os.environ.get("PAUSE_MIN", 30))
+ENRICH_PER_CYCLE = int(os.environ.get("ENRICH_PER_CYCLE", 300))
+LINKEDIN_PER_CYCLE = int(os.environ.get("LINKEDIN_PER_CYCLE", 30))  # spreads the monthly Brave credit over many cycles
 PAGE = (Path(__file__).parent / "dashboard.html").read_bytes()
 STATE_FILE = p.DATA / "state.json"
 COUNTRIES = sorted(phonenumbers.SUPPORTED_REGIONS)
@@ -95,6 +103,7 @@ class Runner:
             else:
                 self.phase = "done"  # every sector x location searched; re-check for new targets often
                 wait = 30
+            self.enrich_cycle(scraped=bool(run))  # runs even when Google is blocking: other hosts
             self.stop.wait(wait)
         if self.phase != backoff.STOP_MESSAGE:
             self.phase = "stopped"
@@ -130,14 +139,47 @@ class Runner:
         self.phase = "verifying emails"
         # Stopped or crashed mid-run: keep what was found, but leave the searches queued.
         new, dup = p.ingest(out, run["keys"] if finished else [])
-        p.export()
         state = load_state()
         save_state(dups_total=state.get("dups_total", 0) + dup,
                    last_run={"file": out.name, "new": new, "dups": dup, "at": time.strftime("%H:%M"), "class": kind})
         self.phase = backoff.STOP_MESSAGE if auto_stopped else "resting"
 
+    def enrich_cycle(self, scraped):
+        """Read business websites, then search Brave for missing owners, then rewrite the CSV."""
+        if self.stop.is_set():
+            return
+        after = self.phase
+        con = p.db()
+        self.phase = "reading websites"
+        crawled = asyncio.run(enrich.enrich_pending(con, ENRICH_PER_CYCLE, self.stop)).get("crawled")
+        self.phase = "searching LinkedIn"
+        with httpx.Client() as client:
+            looked_up = linkedin.lookup_pending(con, client, LINKEDIN_PER_CYCLE, self.stop).get("looked_up")
+        if scraped or crawled or looked_up:
+            self.phase = "exporting"
+            p.export()
+        if self.phase != backoff.STOP_MESSAGE:
+            self.phase = after
+
 
 runner = Runner()
+
+
+def run_info(run, log_text):
+    """Where the current run is: grid cells = rows x columns of the bbox for each sector, done = finished
+    Maps search jobs in the scraper log."""
+    if not run:
+        return None
+    info = {"location": run.get("location"), "mode": run["mode"], "bbox": run["bbox"], "area_km2": None,
+            "cells_total": None, "cells_done": backoff.search_jobs(log_text)[0]}
+    if run["mode"] == "grid":
+        s, w, n, e = map(float, run["bbox"].split(","))
+        height = (n - s) * 111.32
+        width = (e - w) * 111.32 * math.cos(math.radians((s + n) / 2))
+        cell = run["cell_km"]
+        info["area_km2"] = round(grid.bbox_area_km2((s, w, n, e)))
+        info["cells_total"] = math.ceil(height / cell) * math.ceil(width / cell) * len(run["inputs"])
+    return info
 
 
 def live_rows(path):
@@ -172,8 +214,8 @@ def stats():
     known = {r[0]: r[1:] for r in con.execute("SELECT place_id, email, email_status FROM leads")}
     raws = sorted(p.DATA.glob("raw-*.json"))
     current = live_rows(raws[-1]) if raws else []
-    searches = p.all_searches()
-    done = p.done_searches()
+    searches_done, searches_total = grid.progress(con)
+    log = p.DATA / "scraper.log"
     feed = []
     for e in reversed(current[-60:]):
         key = e.get("place_id") or e.get("data_id") or e.get("link")
@@ -188,14 +230,24 @@ def stats():
             "dup": runner.phase == "scraping" and key in runner.known_at_start,
         })
     state = load_state()
+    google = state.get("blocks", {}).get("google", {})
+    used, cap = linkedin.usage(con)
     return {
+        "run": run_info(state.get("run"), log.read_text(encoding="utf-8", errors="ignore") if log.exists() else ""),
+        "health": {"last_class": (state.get("last_run") or {}).get("class"), "score": google.get("score", 0),
+                   "pause_min": google.get("pause_min", PAUSE_MIN), "next_attempt": state.get("next_attempt"),
+                   "message": backoff.STOP_MESSAGE if google.get("stopped") else None},
+        "enrich": {"crawled": one("SELECT COUNT(*) FROM leads WHERE site_status IN ('ok', 'blocked', 'refused', 'timeout')"),
+                   "names": one("SELECT COUNT(*) FROM leads WHERE owner_source LIKE 'Website%'"),
+                   "blocked": one("SELECT COUNT(*) FROM leads WHERE site_status = 'blocked'")},
+        "linkedin": {"used": used, "cap": cap} if os.environ.get("BRAVE_API_KEY") else {"skipped": "no BRAVE_API_KEY"},
         "running": runner.thread is not None and runner.thread.is_alive(),
         "phase": runner.phase,
         "run_file": raws[-1].name if raws else None,
         "run_places": len(current),
         "run_with_email": sum(1 for e in current if e.get("emails")),
         "batch": p.lines("data/batch.txt") if (p.DATA / "batch.txt").exists() else [],
-        "searches_total": len(searches), "searches_done": sum(q.split(" #!#")[0] in done for q in searches),
+        "searches_total": searches_total, "searches_done": searches_done,
         "leads": one("SELECT COUNT(*) FROM leads"),
         "emails_ok": one(f"SELECT COUNT(*) FROM leads WHERE {p.VERIFIED}"),
         "mobiles": one("SELECT COUNT(*) FROM leads WHERE phone_e164 IS NOT NULL"),

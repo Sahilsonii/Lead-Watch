@@ -84,8 +84,22 @@
   .bar i { display: block; height: 100%; background: var(--signal); transition: width .6s ease; }
   .meta b { color: var(--chalk); font-weight: 500; }
 
+  /* run & health: where the scraper is, whether Google is letting it work, and what enrichment found */
+  .health { margin-bottom: 16px; }
+  .cells { display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; }
+  .cell { padding: 12px 16px; border-left: 1px solid var(--line); display: grid; gap: 4px; align-content: start; min-width: 0; }
+  .cell:first-child { border-left: 0; }
+  .cell .label { font-size: 12px; color: var(--dim); }
+  .cell .val { font-size: 15px; font-weight: 500; overflow-wrap: anywhere; }
+  .cell .val.num { font-size: 20px; }
+  .cell .sub { font-size: 12px; color: var(--faint); }
+  .cell .bar { flex: none; margin: 2px 0; }
+  .cell code { font-size: 11px; color: var(--faint); }
+  .stopnote { padding: 10px 16px; border-top: 1px solid var(--line); color: var(--halt); background: var(--halt-bg);
+    font-size: 13px; font-weight: 500; border-radius: 0 0 10px 10px; }
+
   .feed { overflow-x: auto; }
-  .feed h2 { font-size: 13px; font-weight: 600; margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--line);
+  .feed h2, .health h2 { font-size: 13px; font-weight: 600; margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--line);
     display: flex; justify-content: space-between; gap: 12px; }
   .feed h2 span { color: var(--faint); font-weight: 400; }
   table { width: 100%; border-collapse: collapse; min-width: 820px; }
@@ -115,6 +129,9 @@
     .funnel { grid-template-columns: repeat(2, 1fr); }
     .stage { border-left: 0; border-top: 1px solid var(--line); }
     .stage::after { display: none; }
+    .cells { grid-template-columns: 1fr 1fr; }
+    .cell { border-left: 0; border-top: 1px solid var(--line); }
+    .cell:first-child { grid-column: 1 / -1; border-top: 0; }
   }
 </style>
 </head>
@@ -167,6 +184,19 @@
         <span id="last-run"></span>
       </div>
 
+      <section class="card health" aria-label="Run and health">
+        <h2>Run &amp; health</h2>
+        <div class="cells">
+          <div class="cell"><div class="label">Current run</div><div class="val" id="h-run">–</div>
+            <div class="bar" id="h-run-bar" hidden><i style="width:0"></i></div>
+            <div class="sub" id="h-run-sub"></div><code id="h-run-bbox"></code></div>
+          <div class="cell"><div class="label">Google</div><div class="val" id="h-google">–</div><div class="sub" id="h-google-sub"></div></div>
+          <div class="cell"><div class="label">Websites read</div><div class="val num" id="h-sites">–</div><div class="sub" id="h-sites-sub"></div></div>
+          <div class="cell"><div class="label">LinkedIn names (Brave)</div><div class="val num" id="h-li">–</div><div class="sub" id="h-li-sub"></div></div>
+        </div>
+        <div class="stopnote" id="h-stop" role="alert" hidden></div>
+      </section>
+
       <section class="card feed">
         <h2>Live feed <span id="feed-file"></span></h2>
         <table>
@@ -186,7 +216,37 @@
   const post = (path, body = {}) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
   const PHASES = { scraping: "Scraping now", "verifying emails": "Verifying emails", resting: "Resting until the next batch",
-    done: "All searches done. Add sectors or locations to continue", stopping: "Stopping…", stopped: "Stopped" };
+    done: "All searches done. Add sectors or locations to continue", stopping: "Stopping…", stopped: "Stopped",
+    planning: "Planning the next run", "reading websites": "Reading business websites",
+    "searching LinkedIn": "Looking up owners via Brave", exporting: "Writing leads.csv" };
+  const ACTIVE = new Set(["scraping", "verifying emails", "planning", "reading websites", "searching LinkedIn", "exporting"]);
+  const RUN_CLASS = { ok: ["ok", "Clean run"], blocked: ["found", "Blocked"], error: ["", "Scraper error"] };
+
+  function renderHealth(d) {
+    const run = d.run, h = d.health, en = d.enrich, li = d.linkedin;
+    $("h-run").textContent = run ? run.location : "No run in progress";
+    $("h-run-bar").hidden = !(run && run.cells_total);
+    if (run && run.cells_total) {
+      $("h-run-bar").firstElementChild.style.width = Math.min(100, (100 * run.cells_done) / run.cells_total) + "%";
+      $("h-run-sub").innerHTML = `Grid · cell <span class="num">${fmt(run.cells_done)}</span> of <span class="num">${fmt(run.cells_total)}</span> · <span class="num">${fmt(run.area_km2)}</span> km²`;
+    } else {
+      $("h-run-sub").innerHTML = run ? `Plain search · <span class="num">${fmt(d.run_places)}</span> places so far` : "";
+    }
+    $("h-run-bbox").textContent = run && run.bbox ? run.bbox : "";
+
+    const [cls, label] = RUN_CLASS[h.last_class] || ["", "No runs yet"];
+    $("h-google").innerHTML = `<span class="pip ${cls}">${label}</span>`;
+    const next = h.next_attempt && h.last_class !== "ok" ? ` · next try ${esc(h.next_attempt.slice(11, 16))}` : "";
+    $("h-google-sub").innerHTML = `Pause <span class="num">${fmt(h.pause_min)}</span> min${next}`
+      + (h.score ? ` · block score <span class="num">${h.score}</span>` : "");
+    $("h-stop").hidden = !h.message;
+    $("h-stop").textContent = h.message || "";
+
+    $("h-sites").textContent = fmt(en.crawled);
+    $("h-sites-sub").textContent = `${fmt(en.names)} owner names · ${fmt(en.blocked)} blocked`;
+    $("h-li").textContent = li.skipped ? "Off" : `${fmt(li.used)} / ${fmt(li.cap)}`;
+    $("h-li-sub").textContent = li.skipped ? "Add BRAVE_API_KEY to enable" : "searches this month";
+  }
   let seen = null, locations = [], loaded = false;
 
   // ---- targets form -------------------------------------------------------
@@ -234,7 +294,8 @@
     catch { $("status").className = "status err"; $("status-text").textContent = "Dashboard server not reachable"; return; }
 
     const failed = d.phase.startsWith("scraper failed");
-    $("status").className = "status" + (failed ? " err" : d.phase === "scraping" || d.phase === "verifying emails" ? " live" : "");
+    const halted = d.phase === d.health.message;
+    $("status").className = "status" + (failed || halted ? " err" : ACTIVE.has(d.phase) ? " live" : "");
     $("status-text").textContent = PHASES[d.phase] || d.phase;
     $("start").disabled = d.running; $("stop").disabled = !d.running;
     $("batch").innerHTML = d.running && d.batch.length
@@ -262,6 +323,7 @@
     const lr = d.last_run;
     $("last-run").innerHTML = lr ? `Last run ${esc(lr.at)}: <b>${fmt(lr.new)} new</b>, ${fmt(lr.dups)} already saved` : "";
     $("feed-file").textContent = d.run_file || "";
+    renderHealth(d);
 
     const now = new Set(d.feed.map((r) => r.link));
     $("rows").innerHTML = d.feed.length ? d.feed.map((r) => `
