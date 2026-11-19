@@ -1,0 +1,18 @@
+# systemd unit: keeps Lead Watch (dashboard + scrape loop) running 24/7, restarts after crashes or reboots.
+# If the loop was running (Start pressed) it resumes by itself; if you pressed Stop it stays stopped.
+# Install: sudo cp deploy/lead-pipeline.service /etc/systemd/system/ && sudo systemctl enable --now lead-pipeline
+# Logs:    journalctl -u lead-pipeline -f
+[Unit]
+Description=Lead Watch - Google Maps lead pipeline
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/lead-pipeline
+ExecStart=/home/ubuntu/lead-pipeline/.venv/bin/python pipeline/dashboard.py
+Restart=always
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

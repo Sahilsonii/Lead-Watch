@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lead Watch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --night: #0f1214; --panel: #161a1d; --well: #1c2125; --line: #262c31; --chalk: #e6e9eb; --dim: #8a949c; --faint: #5b646b;
+    --signal: #3ddc97; --signal-bg: rgba(61, 220, 151, .12); --signal-ink: #06281a;
+    --amber: #f2b84b; --amber-bg: rgba(242, 184, 75, .12); --halt: #f07167; --halt-bg: rgba(240, 113, 103, .12);
+    --flash: rgba(61, 220, 151, .10);
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --night: #f6f5f1; --panel: #ffffff; --well: #f1f0eb; --line: #e3e1da; --chalk: #1b1f22; --dim: #5f676d; --faint: #9aa1a6;
+      --signal: #0f8a5f; --signal-bg: rgba(15, 138, 95, .10); --signal-ink: #ffffff;
+      --amber: #a86a00; --amber-bg: rgba(168, 106, 0, .10); --halt: #c2410c; --halt-bg: rgba(194, 65, 12, .08);
+      --flash: rgba(15, 138, 95, .08); }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--night); color: var(--chalk); font: 14px/1.45 "IBM Plex Sans", system-ui, sans-serif; }
+  .num, td.m, code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  main { max-width: 1320px; margin: 0 auto; padding: 20px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin-bottom: 18px; }
+  h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
+  .status { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--dim); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+  .live .dot { background: var(--signal); animation: pulse 1.6s ease-out infinite; }
+  .live { color: var(--signal); }
+  .err { color: var(--halt); } .err .dot { background: var(--halt); }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--signal-bg); } 70% { box-shadow: 0 0 0 8px transparent; } }
+  @media (prefers-reduced-motion: reduce) { .live .dot { animation: none; } tr.new td { animation: none !important; } }
+  .controls { margin-left: auto; display: flex; gap: 8px; }
+  button { font: 500 13px "IBM Plex Sans", sans-serif; border-radius: 7px; padding: 7px 14px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--well); color: var(--chalk); min-height: 34px; }
+  button:hover:not(:disabled) { border-color: var(--dim); }
+  button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
+  button:disabled { opacity: .4; cursor: default; }
+  .go { background: var(--signal); color: var(--signal-ink); border-color: transparent; }
+  .go:hover:not(:disabled) { border-color: transparent; filter: brightness(1.08); }
+  .halt { color: var(--halt); border-color: var(--halt-bg); background: var(--halt-bg); }
+  .batch { width: 100%; font-size: 13px; color: var(--dim); }
+  .batch b { color: var(--chalk); font-weight: 500; }
+
+  .layout { display: grid; grid-template-columns: 320px 1fr; gap: 16px; align-items: start; }
+  .card { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+
+  /* targets: what to scrape */
+  .targets { padding: 16px; display: grid; gap: 16px; position: sticky; top: 16px; }
+  .targets h2 { font-size: 13px; font-weight: 600; margin: 0; }
+  .field { display: grid; gap: 6px; }
+  .field > label { font-size: 12px; color: var(--dim); }
+  .hint { font-size: 12px; color: var(--faint); }
+  textarea, input, select { width: 100%; font: 13px "IBM Plex Sans", sans-serif; color: var(--chalk); background: var(--well);
+    border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; }
+  textarea { resize: vertical; min-height: 92px; line-height: 1.5; }
+  .add { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
+  .add select { grid-column: 1 / -1; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; background: var(--well); border: 1px solid var(--line);
+    border-radius: 999px; padding: 2px 4px 2px 10px; }
+  .chip .cc { color: var(--faint); font-family: "IBM Plex Mono", monospace; font-size: 11px; }
+  .chip button { border: 0; background: none; padding: 0 6px; min-height: 22px; color: var(--faint); font-size: 14px; line-height: 1; }
+  .chip button:hover { color: var(--halt); }
+  .save { display: flex; align-items: center; gap: 10px; }
+  .save .hint.dirty { color: var(--amber); }
+
+  /* funnel: how raw places turn into reachable leads */
+  .funnel { display: grid; grid-template-columns: repeat(5, 1fr); overflow: hidden; margin-bottom: 12px; }
+  .stage { padding: 14px 16px; border-left: 1px solid var(--line); position: relative; }
+  .stage:first-child { border-left: 0; }
+  .stage .label { font-size: 12px; color: var(--dim); }
+  .stage .num { font-size: 26px; font-weight: 500; margin-top: 2px; }
+  .stage .sub { font-size: 12px; color: var(--faint); }
+  .stage.win .num { color: var(--signal); }
+  .stage:not(:last-child)::after { content: "›"; position: absolute; right: -6px; top: 50%; transform: translateY(-50%);
+    color: var(--faint); background: var(--panel); font-size: 16px; line-height: 1; padding: 2px 0; }
+
+  .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; font-size: 12px; color: var(--dim); margin-bottom: 16px; }
+  .progress { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 240px; }
+  .bar { flex: 1; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--signal); transition: width .6s ease; }
+  .meta b { color: var(--chalk); font-weight: 500; }
+
+  .feed { overflow-x: auto; }
+  .feed h2 { font-size: 13px; font-weight: 600; margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--line);
+    display: flex; justify-content: space-between; gap: 12px; }
+  .feed h2 span { color: var(--faint); font-weight: 400; }
+  table { width: 100%; border-collapse: collapse; min-width: 820px; }
+  th { text-align: left; font-size: 11px; font-weight: 500; color: var(--faint); text-transform: uppercase;
+    letter-spacing: .05em; padding: 8px 16px; }
+  td { padding: 9px 16px; border-top: 1px solid var(--line); vertical-align: top; }
+  td.m { font-size: 12.5px; white-space: nowrap; }
+  tr.new td { animation: flash 2.4s ease-out; }
+  tr.dup { opacity: .55; }
+  @keyframes flash { from { background: var(--flash); } to { background: transparent; } }
+  .name { font-weight: 500; }
+  .name a { color: inherit; text-decoration: none; }
+  .name a:hover { text-decoration: underline; }
+  .cat { font-size: 12px; color: var(--dim); }
+  .muted { color: var(--faint); }
+
+  /* signature: reach pips show whether each channel is found, verified, or missing */
+  .reach { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pip { font-size: 11px; font-weight: 500; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line);
+    color: var(--faint); white-space: nowrap; }
+  .pip.found { color: var(--amber); background: var(--amber-bg); border-color: transparent; }
+  .pip.ok { color: var(--signal); background: var(--signal-bg); border-color: transparent; }
+  .empty { padding: 40px 16px; text-align: center; color: var(--dim); }
+  @media (max-width: 980px) {
+    .layout { grid-template-columns: 1fr; }
+    .targets { position: static; }
+    .funnel { grid-template-columns: repeat(2, 1fr); }
+    .stage { border-left: 0; border-top: 1px solid var(--line); }
+    .stage::after { display: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Lead Watch</h1>
+    <span id="status" class="status" role="status"><span class="dot"></span><span id="status-text">Connecting…</span></span>
+    <div class="controls">
+      <button id="start" class="go" disabled>Start</button>
+      <button id="stop" class="halt" disabled>Stop</button>
+    </div>
+    <div id="batch" class="batch"></div>
+  </header>
+
+  <div class="layout">
+    <aside class="card targets" aria-label="What to scrape">
+      <h2>What to scrape</h2>
+      <div class="field">
+        <label for="sectors">Sectors, one per line</label>
+        <textarea id="sectors" placeholder="dentist&#10;real estate agency&#10;gym"></textarea>
+      </div>
+      <div class="field">
+        <label for="country">Locations</label>
+        <div class="add">
+          <select id="country"></select>
+          <input id="cities" placeholder="Cities, comma separated (optional)" autocomplete="off">
+          <button id="add-loc">Add</button>
+        </div>
+        <div class="hint">Leave cities empty to search the whole country. Big cities give far more results, because Google caps each search at about 120 places.</div>
+        <div id="chips" class="chips"></div>
+      </div>
+      <div class="save">
+        <button id="save" class="go">Save targets</button>
+        <span id="save-hint" class="hint"></span>
+      </div>
+    </aside>
+
+    <div>
+      <section class="card funnel" aria-label="Lead funnel">
+        <div class="stage"><div class="label">Places this run</div><div class="num" id="f-places">–</div><div class="sub" id="f-places-sub"></div></div>
+        <div class="stage"><div class="label">Unique leads saved</div><div class="num" id="f-leads">–</div><div class="sub" id="f-dups"></div></div>
+        <div class="stage win"><div class="label">Email verified</div><div class="num" id="f-email">–</div><div class="sub">domain receives mail</div></div>
+        <div class="stage"><div class="label">Mobile numbers</div><div class="num" id="f-mobile">–</div><div class="sub">likely on WhatsApp</div></div>
+        <div class="stage win"><div class="label">Email + mobile</div><div class="num" id="f-both">–</div><div class="sub">best leads</div></div>
+      </section>
+
+      <div class="meta">
+        <div class="progress"><div class="bar"><i id="q-bar" style="width:0"></i></div><span id="q-num" class="num"></span></div>
+        <span id="last-run"></span>
+      </div>
+
+      <section class="card feed">
+        <h2>Live feed <span id="feed-file"></span></h2>
+        <table>
+          <thead><tr><th>Business</th><th>Reach</th><th>Email</th><th>Phone</th><th>Rating</th></tr></thead>
+          <tbody id="rows"><tr><td colspan="5" class="empty">Press Start to begin scraping.</td></tr></tbody>
+        </table>
+      </section>
+    </div>
+  </div>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const fmt = (n) => Number(n).toLocaleString();
+  const regionName = new Intl.DisplayNames(["en"], { type: "region" });
+  const country = (cc) => { try { return regionName.of(cc); } catch { return cc; } };
+  const post = (path, body = {}) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+  const PHASES = { scraping: "Scraping now", "verifying emails": "Verifying emails", resting: "Resting until the next batch",
+    done: "All searches done. Add sectors or locations to continue", stopping: "Stopping…", stopped: "Stopped" };
+  let seen = null, locations = [], loaded = false;
+
+  // ---- targets form -------------------------------------------------------
+  function renderChips() {
+    $("chips").innerHTML = locations.map(([city, cc], i) =>
+      `<span class="chip">${esc(city)} <span class="cc">${esc(cc)}</span><button aria-label="Remove ${esc(city)}" data-i="${i}">×</button></span>`).join("")
+      || `<span class="hint">No locations yet.</span>`;
+  }
+  function dirty() { $("save-hint").textContent = "Unsaved changes"; $("save-hint").className = "hint dirty"; }
+  $("chips").onclick = (e) => { const i = e.target.dataset.i; if (i !== undefined) { locations.splice(+i, 1); renderChips(); dirty(); } };
+  $("sectors").oninput = dirty;
+  $("add-loc").onclick = () => {
+    const cc = $("country").value;
+    const cities = $("cities").value.split(",").map((s) => s.trim()).filter(Boolean);
+    for (const city of cities.length ? cities : [country(cc)]) {
+      if (!locations.some(([c, k]) => c.toLowerCase() === city.toLowerCase() && k === cc)) locations.push([city, cc]);
+    }
+    $("cities").value = "";
+    renderChips(); dirty();
+  };
+  $("cities").onkeydown = (e) => { if (e.key === "Enter") $("add-loc").click(); };
+  $("save").onclick = async () => {
+    const sectors = $("sectors").value.split("\n").map((s) => s.trim()).filter(Boolean);
+    await post("/targets", { sectors, locations });
+    loaded = false; // reload the cleaned, deduped version from the server
+    await tick();
+    $("save-hint").textContent = "Saved"; $("save-hint").className = "hint";
+  };
+
+  // ---- controls -----------------------------------------------------------
+  $("start").onclick = async () => { $("start").disabled = true; await post("/start"); tick(); };
+  $("stop").onclick = async () => { $("stop").disabled = true; await post("/stop"); tick(); };
+
+  // ---- pips ---------------------------------------------------------------
+  function emailPip(r) {
+    if (r.email_status && r.email_status !== "invalid") return `<span class="pip ok">Email ✓</span>`;
+    if (r.emails.length) return `<span class="pip found" title="Found on their website, verified when the run ends">Email found</span>`;
+    return `<span class="pip">No email</span>`;
+  }
+  const phonePip = (r) => r.mobile ? `<span class="pip ok" title="Mobile number, likely on WhatsApp">Mobile</span>` : `<span class="pip">Landline</span>`;
+
+  async function tick() {
+    let d;
+    try { d = await (await fetch("/api", { cache: "no-store" })).json(); }
+    catch { $("status").className = "status err"; $("status-text").textContent = "Dashboard server not reachable"; return; }
+
+    const failed = d.phase.startsWith("scraper failed");
+    $("status").className = "status" + (failed ? " err" : d.phase === "scraping" || d.phase === "verifying emails" ? " live" : "");
+    $("status-text").textContent = PHASES[d.phase] || d.phase;
+    $("start").disabled = d.running; $("stop").disabled = !d.running;
+    $("batch").innerHTML = d.running && d.batch.length
+      ? "Batch: " + d.batch.map((q) => { const [s, id] = q.split("#!#"); return `<b>${esc(s.trim())}</b> <span class="muted">${esc((id || "").split("|")[0])}</span>`; }).join(", ") : "";
+
+    if (!loaded) {
+      $("country").innerHTML = d.countries.map((cc) => [cc, country(cc)]).sort((a, b) => a[1].localeCompare(b[1]))
+        .map(([cc, n]) => `<option value="${cc}">${esc(n)}</option>`).join("");
+      $("country").value = d.targets.locations.at(-1)?.[1] || "AE";
+      $("sectors").value = d.targets.sectors.join("\n");
+      locations = d.targets.locations;
+      renderChips();
+      loaded = true;
+    }
+
+    $("f-places").textContent = fmt(d.run_places);
+    $("f-places-sub").textContent = `${fmt(d.run_with_email)} with an email on their site`;
+    $("f-leads").textContent = fmt(d.leads);
+    $("f-dups").textContent = `${fmt(d.dups_total)} duplicates skipped`;
+    $("f-email").textContent = fmt(d.emails_ok);
+    $("f-mobile").textContent = fmt(d.mobiles);
+    $("f-both").textContent = fmt(d.both);
+    $("q-bar").style.width = (d.searches_total ? (100 * d.searches_done) / d.searches_total : 0) + "%";
+    $("q-num").textContent = `${d.searches_done} / ${d.searches_total} searches`;
+    const lr = d.last_run;
+    $("last-run").innerHTML = lr ? `Last run ${esc(lr.at)}: <b>${fmt(lr.new)} new</b>, ${fmt(lr.dups)} already saved` : "";
+    $("feed-file").textContent = d.run_file || "";
+
+    const now = new Set(d.feed.map((r) => r.link));
+    $("rows").innerHTML = d.feed.length ? d.feed.map((r) => `
+      <tr class="${seen && !seen.has(r.link) ? "new" : ""} ${r.dup ? "dup" : ""}">
+        <td><div class="name"><a href="${esc(r.link)}" target="_blank" rel="noopener">${esc(r.name)}</a></div>
+            <div class="cat">${esc(r.category)} · ${esc(country(r.cc))}</div></td>
+        <td><div class="reach">${r.dup ? `<span class="pip">Already saved</span>` : ""}${emailPip(r)}${phonePip(r)}</div></td>
+        <td class="m">${r.email ? esc(r.email) : r.emails.length ? esc(r.emails[0]) : '<span class="muted">—</span>'}</td>
+        <td class="m">${esc(r.mobile || r.phone) || '<span class="muted">—</span>'}</td>
+        <td class="m">${r.rating ? `${r.rating} <span class="muted">(${fmt(r.reviews)})</span>` : '<span class="muted">—</span>'}</td>
+      </tr>`).join("") : `<tr><td colspan="5" class="empty">${d.running ? "Waiting for the first places…" : "Press Start to begin scraping."}</td></tr>`;
+    seen = now;
+  }
+  tick();
+  setInterval(tick, 3000);
+</script>
+</body>
+</html>
