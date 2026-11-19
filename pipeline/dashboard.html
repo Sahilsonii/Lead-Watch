@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lead Watch</title>
+<script>
+  // apply a saved theme before first paint, so the page never flashes the other one
+  try { const t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -13,12 +17,19 @@
     --amber: #f2b84b; --amber-bg: rgba(242, 184, 75, .12); --halt: #f07167; --halt-bg: rgba(240, 113, 103, .12);
     --flash: rgba(61, 220, 151, .10);
   }
+  /* light tokens: the system setting, unless the header toggle picked a theme (data-theme on <html>) */
   @media (prefers-color-scheme: light) {
-    :root { --night: #f6f5f1; --panel: #ffffff; --well: #f1f0eb; --line: #e3e1da; --chalk: #1b1f22; --dim: #5f676d; --faint: #9aa1a6;
+    :root:not([data-theme="dark"]) { --night: #f6f5f1; --panel: #ffffff; --well: #f1f0eb; --line: #e3e1da; --chalk: #1b1f22; --dim: #5f676d; --faint: #9aa1a6;
       --signal: #0f8a5f; --signal-bg: rgba(15, 138, 95, .10); --signal-ink: #ffffff;
       --amber: #a86a00; --amber-bg: rgba(168, 106, 0, .10); --halt: #c2410c; --halt-bg: rgba(194, 65, 12, .08);
-      --flash: rgba(15, 138, 95, .08); }
+      --flash: rgba(15, 138, 95, .08); color-scheme: light; }
   }
+  :root[data-theme="light"] { --night: #f6f5f1; --panel: #ffffff; --well: #f1f0eb; --line: #e3e1da; --chalk: #1b1f22; --dim: #5f676d; --faint: #9aa1a6;
+    --signal: #0f8a5f; --signal-bg: rgba(15, 138, 95, .10); --signal-ink: #ffffff;
+    --amber: #a86a00; --amber-bg: rgba(168, 106, 0, .10); --halt: #c2410c; --halt-bg: rgba(194, 65, 12, .08);
+    --flash: rgba(15, 138, 95, .08); color-scheme: light; }
+  :root { color-scheme: dark; }
+  .theme { min-width: 34px; padding: 7px 10px; font-size: 15px; line-height: 1; color: var(--dim); }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--night); color: var(--chalk); font: 14px/1.45 "IBM Plex Sans", system-ui, sans-serif; }
   .num, td.m, code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
@@ -141,6 +152,7 @@
     <h1>Lead Watch</h1>
     <span id="status" class="status" role="status"><span class="dot"></span><span id="status-text">Connecting…</span></span>
     <div class="controls">
+      <button id="theme" class="theme" type="button"></button>
       <button id="start" class="go" disabled>Start</button>
       <button id="stop" class="halt" disabled>Stop</button>
     </div>
@@ -275,6 +287,24 @@
     await tick();
     $("save-hint").textContent = "Saved"; $("save-hint").className = "hint";
   };
+
+  // ---- theme: follows the system until the toggle is used, then remembers the choice --------------
+  const systemDark = matchMedia("(prefers-color-scheme: dark)");
+  const isDark = () => (document.documentElement.dataset.theme || (systemDark.matches ? "dark" : "light")) === "dark";
+  function showTheme() {
+    const dark = isDark();
+    $("theme").textContent = dark ? "☀" : "☾";
+    $("theme").setAttribute("aria-label", dark ? "Switch to light mode" : "Switch to dark mode");
+    $("theme").title = $("theme").getAttribute("aria-label");
+  }
+  $("theme").onclick = () => {
+    const next = isDark() ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem("theme", next); } catch {}
+    showTheme();
+  };
+  systemDark.addEventListener("change", showTheme);
+  showTheme();
 
   // ---- controls -----------------------------------------------------------
   $("start").onclick = async () => { $("start").disabled = true; await post("/start"); tick(); };

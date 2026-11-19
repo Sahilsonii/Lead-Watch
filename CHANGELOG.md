@@ -10,6 +10,7 @@ Kept up to date after every step, so the work can continue from any account or s
 - A final whole-branch review of Phase A was started. Its findings still need a fix pass, then the merge decision (Sahil's call).
 - Plan: `docs/superpowers/plans/2026-11-20-lead-watch-phase-a.md`. Design: `docs/superpowers/specs/2026-11-20-lead-watch-round-one-design.md`. The step-by-step task log is in `.superpowers/sdd/2026-11-20-lead-watch-phase-a/progress.md` (not in git).
 - Backups of the lead database from before the live test: `data/leads.backup.db`, `data/leads.db.bak-phase-a`.
+- 2026-11-20 01:55 IST: dark mode toggle added to the dashboard header (see Phase A, Added). Done and checked in the browser.
 
 **Next: whole-country search and a sector dropdown (being designed, nothing built yet)**
 Agreed with Sahil so far:
@@ -31,6 +32,7 @@ Agreed with Sahil so far:
 - **LinkedIn names via Brave Search** (optional, `BRAVE_API_KEY`). LinkedIn itself is never opened. Capped per month (`BRAVE_MONTHLY_CAP`, default 1000) and per cycle (`LINKEDIN_PER_CYCLE`, 30), and it stops on Brave's limit responses.
 - `blocked_domains.txt`: website domains never read (government and health-service sites by default).
 - **Export columns 19–20:** Social Links and Sources.
+- **Dark mode toggle** (☾ / ☀) in the dashboard header. The page follows the system's light or dark setting until the toggle is used, then remembers the choice in that browser.
 - **Run & health panel** on the dashboard: current location and grid cell progress, Google status, pause and next try, websites read, names found, sites blocked, and Brave usage.
 
 ### Changed
