@@ -151,4 +151,8 @@ r.scrape_once = flaky
 d.PAUSE_MIN = 0
 r.loop()
 assert len(tries) == 2 and "PermissionError" in (tmp / "runner.log").read_text()
+# sector dropdown: sectors.txt must survive save_targets unchanged (lowercase, no "#" or "|", no repeats)
+opts = d.p.lines("sectors.txt")
+assert len(opts) >= 40 and len(set(opts)) == len(opts), "sectors.txt has repeats"
+assert all(o == o.lower() and "#" not in o and "|" not in o for o in opts), opts
 print("all checks passed")

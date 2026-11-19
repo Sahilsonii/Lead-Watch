@@ -1,0 +1,61 @@
+accountant
+architect
+auto repair shop
+bakery
+bar
+barber shop
+beauty salon
+cafe
+car dealer
+car rental
+carpenter
+catering service
+chiropractor
+cleaning service
+clothing store
+construction company
+coworking space
+dentist
+driving school
+electrician
+event planner
+fast food restaurant
+florist
+furniture store
+gym
+hair salon
+hotel
+hvac contractor
+insurance agency
+interior designer
+it services
+jewelry store
+landscaping
+laundry
+law firm
+marketing agency
+medical clinic
+moving company
+nail salon
+optician
+painter
+pest control
+pet store
+pharmacy
+photographer
+physiotherapist
+plumber
+printing service
+pub
+real estate agency
+restaurant
+roofing contractor
+school
+spa
+supermarket
+tailor
+travel agency
+tutoring center
+veterinarian
+wedding venue
+yoga studio

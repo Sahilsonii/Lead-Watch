@@ -63,6 +63,7 @@
   .targets h2 { font-size: 13px; font-weight: 600; margin: 0; }
   .field { display: grid; gap: 6px; }
   .field > label { font-size: 12px; color: var(--dim); }
+  .field[hidden] { display: none; }
   .hint { font-size: 12px; color: var(--faint); }
   textarea, input, select { width: 100%; font: 13px "IBM Plex Sans", sans-serif; color: var(--chalk); background: var(--well);
     border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; }
@@ -163,10 +164,6 @@
     <aside class="card targets" aria-label="What to scrape">
       <h2>What to scrape</h2>
       <div class="field">
-        <label for="sectors">Sectors, one per line</label>
-        <textarea id="sectors" placeholder="dentist&#10;real estate agency&#10;gym"></textarea>
-      </div>
-      <div class="field">
         <label for="country">Locations</label>
         <div class="add">
           <select id="country"></select>
@@ -175,6 +172,16 @@
         </div>
         <div class="hint">Leave cities empty to search the whole country. Big cities give far more results, because Google caps each search at about 120 places.</div>
         <div id="chips" class="chips"></div>
+      </div>
+      <div class="field" id="sectors-field" hidden>
+        <label for="sector-pick">Sectors</label>
+        <div class="add">
+          <select id="sector-pick"></select>
+          <input id="sector-custom" placeholder="Or type your own" autocomplete="off">
+          <button id="add-sector">Add</button>
+        </div>
+        <div class="hint">Every sector is searched in every location.</div>
+        <div id="sector-chips" class="chips"></div>
       </div>
       <div class="save">
         <button id="save" class="go">Save targets</button>
@@ -259,7 +266,7 @@
     $("h-li").textContent = li.skipped ? "Off" : `${fmt(li.used)} / ${fmt(li.cap)}`;
     $("h-li-sub").textContent = li.skipped ? "Add BRAVE_API_KEY to enable" : "searches this month";
   }
-  let seen = null, locations = [], loaded = false;
+  let seen = null, locations = [], sectors = [], sectorOptions = [], loaded = false;
 
   // ---- targets form -------------------------------------------------------
   function renderChips() {
@@ -269,9 +276,28 @@
   }
   function dirty() { $("save-hint").textContent = "Unsaved changes"; $("save-hint").className = "hint dirty"; }
   $("chips").onclick = (e) => { const i = e.target.dataset.i; if (i !== undefined) { locations.splice(+i, 1); renderChips(); dirty(); } };
-  $("sectors").oninput = dirty;
+
+  // sectors: a dropdown of general sectors (sectors.txt) that opens once a country is picked, plus free text
+  function renderSectors() {
+    $("sector-chips").innerHTML = sectors.map((s, i) =>
+      `<span class="chip">${esc(s)}<button aria-label="Remove ${esc(s)}" data-i="${i}">×</button></span>`).join("")
+      || `<span class="hint">No sectors yet.</span>`;
+    $("sector-pick").innerHTML = `<option value="">Add a sector…</option>` + sectorOptions
+      .map((s) => `<option value="${esc(s)}"${sectors.includes(s) ? " disabled" : ""}>${esc(s)}</option>`).join("");
+  }
+  function addSector(s) {
+    s = s.trim().toLowerCase();
+    if (s && !sectors.includes(s)) { sectors.push(s); renderSectors(); dirty(); }
+  }
+  $("sector-chips").onclick = (e) => { const i = e.target.dataset.i; if (i !== undefined) { sectors.splice(+i, 1); renderSectors(); dirty(); } };
+  $("sector-pick").onchange = () => addSector($("sector-pick").value);
+  $("add-sector").onclick = () => { addSector($("sector-custom").value); $("sector-custom").value = ""; };
+  $("sector-custom").onkeydown = (e) => { if (e.key === "Enter") $("add-sector").click(); };
+  $("country").onchange = () => { $("sectors-field").hidden = !$("country").value; };
+
   $("add-loc").onclick = () => {
     const cc = $("country").value;
+    if (!cc) return;
     const cities = $("cities").value.split(",").map((s) => s.trim()).filter(Boolean);
     for (const city of cities.length ? cities : [country(cc)]) {
       if (!locations.some(([c, k]) => c.toLowerCase() === city.toLowerCase() && k === cc)) locations.push([city, cc]);
@@ -281,7 +307,6 @@
   };
   $("cities").onkeydown = (e) => { if (e.key === "Enter") $("add-loc").click(); };
   $("save").onclick = async () => {
-    const sectors = $("sectors").value.split("\n").map((s) => s.trim()).filter(Boolean);
     await post("/targets", { sectors, locations });
     loaded = false; // reload the cleaned, deduped version from the server
     await tick();
@@ -332,12 +357,13 @@
       ? "Batch: " + d.batch.map((q) => { const [s, id] = q.split("#!#"); return `<b>${esc(s.trim())}</b> <span class="muted">${esc((id || "").split("|")[0])}</span>`; }).join(", ") : "";
 
     if (!loaded) {
-      $("country").innerHTML = d.countries.map((cc) => [cc, country(cc)]).sort((a, b) => a[1].localeCompare(b[1]))
-        .map(([cc, n]) => `<option value="${cc}">${esc(n)}</option>`).join("");
-      $("country").value = d.targets.locations.at(-1)?.[1] || "AE";
-      $("sectors").value = d.targets.sectors.join("\n");
+      $("country").innerHTML = `<option value="">Choose a country…</option>` + d.countries.map((cc) => [cc, country(cc)])
+        .sort((a, b) => a[1].localeCompare(b[1])).map(([cc, n]) => `<option value="${cc}">${esc(n)}</option>`).join("");
+      $("country").value = d.targets.locations.at(-1)?.[1] || "";
+      $("sectors-field").hidden = !$("country").value;
+      sectors = d.targets.sectors; sectorOptions = d.targets.options;
       locations = d.targets.locations;
-      renderChips();
+      renderChips(); renderSectors();
       loaded = true;
     }
 

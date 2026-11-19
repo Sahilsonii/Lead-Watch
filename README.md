@@ -87,7 +87,7 @@ flowchart LR
 
 One local page at `http://localhost:8765` with:
 
-- **What to scrape:** pick sectors and locations, then **Save targets**.
+- **What to scrape:** pick a country (and cities, if you like), then choose sectors from the dropdown that appears, or type your own. Press **Save targets**. The dropdown's list lives in `sectors.txt`.
 - **Start / Stop:** the choice survives a reboot. If the loop was running, it resumes by itself.
 - **Run & health:** the current location, grid cell progress, Google's status, websites read and LinkedIn usage.
 - **Light / dark** toggle that remembers your choice.

@@ -210,7 +210,8 @@ def live_rows(path):
 def targets():
     locs = [l.rsplit(",", 1) for l in p.lines("cities.txt")] if (p.ROOT / "cities.txt").exists() else []
     return {"sectors": p.lines("niches.txt") if (p.ROOT / "niches.txt").exists() else [],
-            "locations": [[c.strip(), cc.strip().upper()] for c, cc in locs]}
+            "locations": [[c.strip(), cc.strip().upper()] for c, cc in locs],
+            "options": p.lines("sectors.txt")}  # the sector dropdown; edit sectors.txt to change it
 
 
 def save_targets(body):

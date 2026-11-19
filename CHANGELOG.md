@@ -20,7 +20,13 @@ Agreed with Sahil so far:
 - The dashboard shows the counts when a country is picked (states, towns, × sectors = searches), and the Run & health panel shows "state N of M, town N of M".
 - Each town is geocoded and grid-searched like Phase A.
 - The sectors text box becomes a dropdown that opens after a country is chosen.
-- 2026-11-20 01:51 IST, Sahil: the dropdown holds about 50 **general** sectors (food, restaurants, pubs, plumbing…), not 1,000 specific Google categories. The list is kept in the project; no outside category list is used. A draft list was proposed in chat; waiting for Sahil's corrections, then the full design is written up and reviewed.
+- 2026-11-20 01:51 IST, Sahil: the dropdown holds about 50 **general** sectors (food, restaurants, pubs, plumbing…), not 1,000 specific Google categories. The list is kept in the project; no outside category list is used.
+- 2026-11-20 02:30 IST: **sector dropdown built** (see Unreleased). The 61-sector list in `sectors.txt` is a first draft for Sahil to correct. Whole-country search (the GeoNames items above) is not built yet.
+
+## Unreleased
+
+### Changed
+- **Sector dropdown.** In "What to scrape", the country comes first; once one is chosen, a **Sectors** dropdown appears with the general sectors from `sectors.txt` (edit that file to change the list). Picking one adds it as a removable chip and greys it out in the list; "Or type your own" still takes any sector. Every sector is still searched in every location.
 - Not included unless asked: a "new leads only" CSV.
 
 ## 2026-11-20: Phase A — grid search, resume, website reading, back-off, LinkedIn via Brave
