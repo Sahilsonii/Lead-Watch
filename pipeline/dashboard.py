@@ -1,7 +1,8 @@
 """Lead Watch: live dashboard + the 24/7 scrape loop, with Start/Stop and target picking.
 
 Run: python pipeline/dashboard.py  ->  http://localhost:8765
-Knobs (env): BATCH (searches per cycle, 5), CONCURRENCY (2), PAUSE_MIN (rest between cycles, 30).
+Knobs (env): CONCURRENCY (2), PAUSE_MIN (rest between cycles, 30), DEPTH (scroll depth per search, 10),
+GRID_CELL_KM (4).
 """
 import json
 import os
@@ -13,13 +14,16 @@ from pathlib import Path
 
 import phonenumbers
 
+import grid
 import process as p
 
 PORT = 8765
 IMAGE = "gosom/google-maps-scraper:v1.19.0"
 CONTAINER = "leads-scraper"
-BATCH = int(os.environ.get("BATCH", 5))
 CONCURRENCY = int(os.environ.get("CONCURRENCY", 2))  # keep low on a datacenter IP to avoid blocks
+DEPTH = int(os.environ.get("DEPTH", 10))  # ~120 places per search; lower it if blocks become constant
+ZOOM = 15  # gosom's default; its README gives no separate value for grid mode
+MAX_RESUMES = 2  # a run that keeps crashing is dropped; its searches stay queued for a fresh try
 PAUSE_MIN = float(os.environ.get("PAUSE_MIN", 30))
 PAGE = (Path(__file__).parent / "dashboard.html").read_bytes()
 STATE_FILE = p.DATA / "state.json"
@@ -38,6 +42,17 @@ def save_state(**changes):
     p.DATA.mkdir(exist_ok=True)
     STATE_FILE.write_text(json.dumps(state))
     return state
+
+
+def docker_args(run, results, resume):
+    """The scraper command for a run. gosom resumes only with identical options, so -resume is the one change."""
+    args = ["docker", "run", "--rm", "--name", CONTAINER,
+            "-v", "gmaps-playwright-cache:/opt", "-v", f"{p.DATA}:/out", IMAGE,
+            "-input", "/out/batch.txt", "-results", f"/out/{results}", "-json", "-email",
+            "-depth", str(DEPTH), "-c", str(CONCURRENCY), "-exit-on-inactivity", "3m"]
+    if run["mode"] == "grid":
+        args += ["-grid-bbox", run["bbox"], "-grid-cell", str(run["cell_km"]), "-grid-strict", "-zoom", str(ZOOM)]
+    return args + ["-resume"] if resume else args
 
 
 class Runner:
@@ -65,8 +80,16 @@ class Runner:
 
     def loop(self):
         while not self.stop.is_set():
-            if p.next_batch(BATCH):
-                self.scrape_once()
+            run = load_state().get("run")  # unfinished run (Stop, crash, reboot): resume it as it was
+            resume = bool(run)
+            if not run:
+                self.phase = "planning"
+                run = grid.next_run(p.db())
+                if run:
+                    run = save_state(run={**run, "results": f"raw-{time.strftime('%Y%m%d-%H%M%S')}.json",
+                                          "resumes": 0})["run"]
+            if run:
+                self.scrape_once(run, resume)
                 wait = PAUSE_MIN * 60
             else:
                 self.phase = "done"  # every sector x location searched; re-check for new targets often
@@ -74,24 +97,23 @@ class Runner:
             self.stop.wait(wait)
         self.phase = "stopped"
 
-    def scrape_once(self):
-        out = p.DATA / f"raw-{time.strftime('%Y%m%d-%H%M%S')}.json"
+    def scrape_once(self, run, resume):
+        out = p.DATA / run["results"]
+        (p.DATA / "batch.txt").write_text("\n".join(run["inputs"]) + "\n", encoding="utf-8")
         self.known_at_start = {r[0] for r in p.db().execute("SELECT place_id FROM leads")}
         self.phase = "scraping"
-        with open(p.DATA / "scraper.log", "w") as log:
-            code = subprocess.run(
-                ["docker", "run", "--rm", "--name", CONTAINER,
-                 "-v", "gmaps-playwright-cache:/opt", "-v", f"{p.DATA}:/out", IMAGE,
-                 "-input", "/out/batch.txt", "-results", f"/out/{out.name}", "-json", "-email",
-                 "-depth", "1", "-c", str(CONCURRENCY), "-exit-on-inactivity", "3m"],
-                stdout=log, stderr=subprocess.STDOUT).returncode
+        with open(p.DATA / "scraper.log", "a" if resume else "w") as log:
+            code = subprocess.run(docker_args(run, out.name, resume), stdout=log, stderr=subprocess.STDOUT).returncode
+        finished = code == 0 and not self.stop.is_set()
+        if not finished and not self.stop.is_set():  # crashed: resume a couple of times, then start over later
+            run = {**run, "resumes": run["resumes"] + 1}
+        save_state(run=None if finished or run["resumes"] > MAX_RESUMES else run)
         if not out.exists():
             self.phase = f"scraper failed (exit {code}), see data/scraper.log"
             return
         self.phase = "verifying emails"
-        # Stopped or crashed mid-run: keep what was found, but leave the searches queued for a retry.
-        done = [q.split(" #!#")[0] for q in p.lines("data/batch.txt")] if code == 0 and not self.stop.is_set() else []
-        new, dup = p.ingest(out, done)
+        # Stopped or crashed mid-run: keep what was found, but leave the searches queued.
+        new, dup = p.ingest(out, run["keys"] if finished else [])
         p.export()
         state = load_state()
         save_state(dups_total=state.get("dups_total", 0) + dup,
