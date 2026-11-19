@@ -170,7 +170,8 @@
           <input id="cities" placeholder="Cities, comma separated (optional)" autocomplete="off">
           <button id="add-loc">Add</button>
         </div>
-        <div class="hint">Leave cities empty to search the whole country. Big cities give far more results, because Google caps each search at about 120 places.</div>
+        <div class="hint">Leave cities empty to search the whole country, smallest places first: villages, towns, cities, states, then the country.</div>
+        <div class="hint" id="country-size" aria-live="polite"></div>
         <div id="chips" class="chips"></div>
       </div>
       <div class="field" id="sectors-field" hidden>
@@ -251,6 +252,11 @@
     } else {
       $("h-run-sub").innerHTML = run ? `Plain search · <span class="num">${fmt(d.run_places)}</span> places so far` : "";
     }
+    if (run && run.area) {  // part of an "All of <country>" sweep: say where in it we are
+      const a = run.area, level = LEVEL_NAMES[a.level];
+      $("h-run-sub").innerHTML = `${level[0].toUpperCase() + level.slice(1)} · <span class="num">${fmt(a.n)}</span> of <span class="num">${fmt(a.of)}</span>`
+        + (a.state && a.level !== "state" ? ` · ${esc(a.state)}` : "") + "<br>" + $("h-run-sub").innerHTML;
+    }
     $("h-run-bbox").textContent = run && run.bbox ? run.bbox : "";
 
     const [cls, label] = RUN_CLASS[h.last_class] || ["", "No runs yet"];
@@ -269,9 +275,10 @@
   let seen = null, locations = [], sectors = [], sectorOptions = [], loaded = false;
 
   // ---- targets form -------------------------------------------------------
+  const placeName = (city, cc) => city === "*" ? `All of ${country(cc)}` : city;  // "*" = whole country
   function renderChips() {
     $("chips").innerHTML = locations.map(([city, cc], i) =>
-      `<span class="chip">${esc(city)} <span class="cc">${esc(cc)}</span><button aria-label="Remove ${esc(city)}" data-i="${i}">×</button></span>`).join("")
+      `<span class="chip">${esc(placeName(city, cc))} <span class="cc">${esc(cc)}</span><button aria-label="Remove ${esc(placeName(city, cc))}" data-i="${i}">×</button></span>`).join("")
       || `<span class="hint">No locations yet.</span>`;
   }
   function dirty() { $("save-hint").textContent = "Unsaved changes"; $("save-hint").className = "hint dirty"; }
@@ -284,6 +291,7 @@
       || `<span class="hint">No sectors yet.</span>`;
     $("sector-pick").innerHTML = `<option value="">Add a sector…</option>` + sectorOptions
       .map((s) => `<option value="${esc(s)}"${sectors.includes(s) ? " disabled" : ""}>${esc(s)}</option>`).join("");
+    if (sizes[$("country").value]) showCountrySize();  // searches = places x sectors
   }
   function addSector(s) {
     s = s.trim().toLowerCase();
@@ -293,13 +301,34 @@
   $("sector-pick").onchange = () => addSector($("sector-pick").value);
   $("add-sector").onclick = () => { addSector($("sector-custom").value); $("sector-custom").value = ""; };
   $("sector-custom").onkeydown = (e) => { if (e.key === "Enter") $("add-sector").click(); };
-  $("country").onchange = () => { $("sectors-field").hidden = !$("country").value; };
+  // the size of an "All of <country>" job: places per level x sectors, and the fewest days it can take
+  const LEVEL_NAMES = { village: "villages", town: "towns", city: "cities", state: "states", country: "country" };
+  const sizes = {};
+  let pauseMin = 30;
+  async function showCountrySize() {
+    const cc = $("country").value;
+    if (!cc) { $("country-size").textContent = ""; return; }
+    if (!sizes[cc]) {
+      $("country-size").textContent = `Counting places in ${country(cc)}… (the first time downloads the GeoNames list, about 10 MB)`;
+      const r = await fetch(`/api/country?cc=${cc}`).then((r) => r.json()).catch(() => ({ error: "Dashboard server not reachable" }));
+      if (r.error) { if ($("country").value === cc) $("country-size").textContent = r.error; return; }
+      sizes[cc] = r;
+    }
+    if ($("country").value !== cc) return;  // the pick changed while counting
+    const s = sizes[cc], places = Object.values(s).reduce((a, b) => a + b, 0);
+    const parts = Object.keys(LEVEL_NAMES).filter((k) => s[k]).map((k) => `${fmt(s[k])} ${LEVEL_NAMES[k]}`);
+    const days = Math.ceil((places * pauseMin) / 1440);
+    $("country-size").textContent = `All of ${country(cc)}: ${parts.join(", ")} = ${fmt(places)} places`
+      + (sectors.length ? ` × ${sectors.length} sectors = ${fmt(places * sectors.length)} searches` : "")
+      + `. One place per cycle, so at least ${fmt(days)} day${days === 1 ? "" : "s"}.`;
+  }
+  $("country").onchange = () => { $("sectors-field").hidden = !$("country").value; showCountrySize(); };
 
   $("add-loc").onclick = () => {
     const cc = $("country").value;
     if (!cc) return;
     const cities = $("cities").value.split(",").map((s) => s.trim()).filter(Boolean);
-    for (const city of cities.length ? cities : [country(cc)]) {
+    for (const city of cities.length ? cities : ["*"]) {
       if (!locations.some(([c, k]) => c.toLowerCase() === city.toLowerCase() && k === cc)) locations.push([city, cc]);
     }
     $("cities").value = "";
@@ -363,7 +392,8 @@
       $("sectors-field").hidden = !$("country").value;
       sectors = d.targets.sectors; sectorOptions = d.targets.options;
       locations = d.targets.locations;
-      renderChips(); renderSectors();
+      pauseMin = d.health.pause_min;
+      renderChips(); renderSectors(); showCountrySize();
       loaded = true;
     }
 

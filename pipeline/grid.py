@@ -9,8 +9,10 @@ import time
 import urllib.parse
 import urllib.request
 
+import geo
 import process as p
 
+ALL = "*"  # cities.txt "*,SA" = all of Saudi Arabia, town by town
 CELL_KM = float(os.environ.get("GRID_CELL_KM", 4))
 MAX_GRID_AREA_KM2 = 2500  # bigger boxes are usually a whole emirate/province: too many cells
 USER_AGENT = "LeadWatch/0.2 (business contact research; respects robots.txt)"
@@ -45,12 +47,13 @@ def cached_location(con, name, cc):
     return con.execute("SELECT bbox, area_km2 FROM locations WHERE name = ? AND cc = ?", (name, cc)).fetchone()
 
 
-def location_bbox(con, name, cc, fetch=http_get_json):
-    """gosom's "minLat,minLon,maxLat,maxLon" for a grid-sized location, else None. Geocodes once, ever."""
+def location_bbox(con, name, cc, fetch=http_get_json, query=None):
+    """gosom's "minLat,minLon,maxLat,maxLon" for a grid-sized location, else None. Geocodes once, ever.
+    query is what Nominatim is asked ("Aurangabad, Bihar"); the cache stays keyed by name."""
     row = cached_location(con, name, cc)
     if row is None:
         try:
-            box = geocode(name, cc, fetch)
+            box = geocode(query or name, cc, fetch)
         except Exception:  # Nominatim down or rate-limiting: plain searches this time, geocode again next plan
             return None
         finally:
@@ -76,14 +79,26 @@ def plain_key(sector, location):
     return f"{sector} in {location}"
 
 
-def next_run(con, fetch=http_get_json):
+def expand(locations, load=geo.towns):
+    """(location, cc, place) in planning order: single cities first, then each "All of" country's places.
+    place is None for a single city. A place already listed as a single city is searched once."""
+    singles = [(loc, cc, None) for loc, cc in locations if loc != ALL]
+    listed = {(loc.lower(), cc) for loc, cc, _ in singles}
+    out = list(singles)
+    for loc, cc in locations:
+        if loc == ALL:
+            out += [(t["location"], cc, t) for t in load(cc) if (t["location"].lower(), cc) not in listed]
+    return out
+
+
+def next_run(con, fetch=http_get_json, load=geo.towns):
     """The first location with sectors still to search, as one run; None when everything is done."""
     sectors, locations = targets()
     done = done_keys(con)
-    for location, cc in locations:
+    for location, cc, town in expand(locations, load):
         if all(f"grid:{s}|{location}" in done and plain_key(s, location) in done for s in sectors):
             continue  # finished either way: don't spend a geocode on it
-        bbox = location_bbox(con, location, cc, fetch)
+        bbox = (town and town["bbox"]) or location_bbox(con, location, cc, fetch, town and town["query"])
         if bbox:
             todo = [s for s in sectors if f"grid:{s}|{location}" not in done]
             inputs = [f"{s} #!#{cc}|{s}|{location}" for s in todo]
@@ -93,22 +108,24 @@ def next_run(con, fetch=http_get_json):
             inputs = [f"{plain_key(s, location)} #!#{cc}|{s}|{location}" for s in todo]
             keys = [plain_key(s, location) for s in todo]
         if todo:
+            area = {k: town[k] for k in ("level", "n", "of", "state")} if town else None
             return {"location": location, "cc": cc, "mode": "grid" if bbox else "plain", "bbox": bbox,
-                    "cell_km": CELL_KM if bbox else None, "inputs": inputs, "keys": keys}
+                    "cell_km": CELL_KM if bbox else None, "inputs": inputs, "keys": keys, "area": area}
     return None
 
 
-def pair_done(con, sector, location, cc, done=None):
-    """Done the way the planner sees it, using only the cached geocode (never calls Nominatim)."""
-    done = done_keys(con) if done is None else done
-    row = cached_location(con, location, cc)
-    grid_mode = bool(row and row[0] and row[1] <= MAX_GRID_AREA_KM2)
-    return (f"grid:{sector}|{location}" if grid_mode else plain_key(sector, location)) in done
-
-
-def progress(con):
-    """(done, total) sector x location pairs, for the dashboard."""
+def progress(con, load=geo.towns):
+    """(done, total) sector x location pairs, for the dashboard. Done the way the planner sees it, using only
+    the cached geocode (never calls Nominatim)."""
     sectors, locations = targets()
     done = done_keys(con)
-    flags = [pair_done(con, s, loc, cc, done) for loc, cc in locations for s in sectors]
+    try:
+        locs = expand(locations, load)
+    except OSError:  # GeoNames not downloaded yet and no network: count what is known
+        locs = expand([l for l in locations if l[0] != ALL], load)
+    flags = []
+    for loc, cc, town in locs:
+        row = cached_location(con, loc, cc)
+        grid_mode = bool(town and town["bbox"]) or bool(row and row[0] and row[1] <= MAX_GRID_AREA_KM2)
+        flags += [(f"grid:{s}|{loc}" if grid_mode else plain_key(s, loc)) in done for s in sectors]
     return sum(flags), len(flags)

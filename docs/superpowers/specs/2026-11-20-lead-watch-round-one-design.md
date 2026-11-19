@@ -194,6 +194,31 @@ Sahil wants LinkedIn data "with the safest and without login way" (2026-11-20). 
 - Leads found only through B have no Google reviews or rating. Their verdict uses the other signals.
 - B runs per location after that location's Google run, so its fills improve the same export.
 
+## Design: whole-country search (2026-11-20, between A and B)
+
+**Intent.** Leaving cities empty used to add one plain search per sector for the whole country, capped by Google at ~120 places. Instead, an "All of <country>" target works through the whole country place by place, smallest areas first.
+
+**Decided by Sahil:**
+- Choosing a country with no cities adds an "All of <country>" target.
+- Places come from GeoNames (free, CC BY 4.0), downloaded once into `data/geo/`. Neighborhood entries (`PPLX`) are skipped.
+- **Order inside a country, smallest areas first** (2026-11-20, replacing "biggest state, biggest town first"): villages (1,000–15,000 people), then towns (15,000–100,000), then cities (100,000+), then each state, then the whole country. One place per run, with all sectors.
+- A place already listed as a single city is searched once.
+- **Single cities always run before any country's places** (2026-11-20). A city added mid-sweep runs at the next cycle. Countries run in list order.
+- The dashboard shows the size of the job when a country is picked, and the run panel shows where the sweep is.
+
+**Approaches considered for the queue order:** single cities first (picked: country sweeps are background work that can take weeks, and a city you add should not wait behind them); taking turns one run per target (everything moves, but a single city finishes slower); list order as before (a big country blocks everything under it).
+
+**Approaches considered for "region":** villages of 1,000–15,000 people (picked: reaches rural businesses the towns miss, at the cost of many more runs); city neighborhoods (the city grid would cover them again); districts/counties (bigger than towns, so not the smallest level).
+
+**Builder's calls (open to correction):**
+- Files: `cities1000.zip`, `admin1CodesASCII.txt` and `countryInfo.txt` from `download.geonames.org/export/dump/`, fetched on first use (picking a country or planning its first place), written atomically. Historical, abandoned and destroyed places (`PPLH`, `PPLQ`, `PPLW`) are skipped along with `PPLX`.
+- Inside each level, the least populated place first. A state's size is the sum of its places' populations (GeoNames has no state populations in these files).
+- **Search areas:** villages and towns get a box around GeoNames' own coordinates (villages 4 km wide, one grid cell; towns 8 km), with no Nominatim lookup: there are thousands, Nominatim allows one request a second, and village names repeat. Cities, states and the country are geocoded through Nominatim as "Name, State" / "State" / "Country". A box over 2,500 km² (every state and country) falls back to plain searches, as before.
+- **Names:** a place keeps its own name; if the name repeats in the country it becomes "Name, State"; if that still repeats, "Name, State 2", "Name, State 3" (least populated first). So search keys never collide.
+- `cities.txt` stores the target as `*,SA`. The chip reads "All of Saudi Arabia".
+- The dashboard shows, per level, how many places there are, the searches (× sectors), and a lower bound on days (one place per cycle, `PAUSE_MIN` between cycles). The run panel shows "Villages · 12 of 4,300 · Uttar Pradesh".
+- Existing entries named after a whole country (added before this change) stay plain searches; re-add them to switch.
+
 ## Decided by Sahil
 
 - Direction: A first, then B (2026-11-20).

@@ -12,22 +12,22 @@ Kept up to date after every step, so the work can continue from any account or s
 - Backups of the lead database from before the live test: `data/leads.backup.db`, `data/leads.db.bak-phase-a`.
 - 2026-11-20 01:55 IST: dark mode toggle added to the dashboard header (see Phase A, Added). Done and checked in the browser.
 
-**Next: whole-country search and a sector dropdown (being designed, nothing built yet)**
-Agreed with Sahil so far:
-- Choosing a country with no cities adds an "All of <country>" target, replacing today's single whole-country search.
-- States, regions and towns come from GeoNames (free, CC BY): towns of 15,000+ people, downloaded once into `data/geo/`.
-- Order: the biggest state (by population) first; inside each state, the biggest town first; one town per run with all sectors. Existing single cities stay; a town already listed is searched once. GeoNames neighborhood entries are skipped.
-- The dashboard shows the counts when a country is picked (states, towns, × sectors = searches), and the Run & health panel shows "state N of M, town N of M".
-- Each town is geocoded and grid-searched like Phase A.
-- The sectors text box becomes a dropdown that opens after a country is chosen.
-- 2026-11-20 01:51 IST, Sahil: the dropdown holds about 50 **general** sectors (food, restaurants, pubs, plumbing…), not 1,000 specific Google categories. The list is kept in the project; no outside category list is used.
-- 2026-11-20 02:30 IST: **sector dropdown built** (see Unreleased). The 61-sector list in `sectors.txt` is a first draft for Sahil to correct. Whole-country search (the GeoNames items above) is not built yet.
+**Sector dropdown and whole-country search: both built** (see Unreleased)
+- 2026-11-20 01:51 IST, Sahil: the dropdown holds about 50 **general** sectors, not 1,000 specific Google categories, kept in the project. The 61-sector list in `sectors.txt` is a first draft for Sahil to correct.
+- 2026-11-20 02:40 IST: whole-country search built. The design, with Sahil's decisions, is in the round-one spec under "Design: whole-country search". Sahil changed the order on the way: **smallest areas first** (villages 1,000–15,000 people, towns to 100,000, cities, states, country) instead of "biggest state, biggest town first"; **single cities always run before any country**; and the user only picks the country, the rest runs by itself.
+- Not tried yet: a live scrape of a village-sized 4 km box (planner, counts and dashboard were checked on real GeoNames data with Nominatim stubbed).
+- **Next:** Phase B (more sources) or the 11 deferred review items, Sahil's call.
+- Not included unless asked: a "new leads only" CSV.
 
 ## Unreleased
 
+### Added
+- **Whole-country search.** Pick a country with no cities and press Add: the "All of <country>" target sweeps the whole country by itself, one place per cycle, smallest areas first: villages (1,000–15,000 people), towns (15,000–100,000), cities (100,000+), each state, then the country. Villages and towns are grid-searched over a 4 km / 8 km box around GeoNames' own coordinates (no geocoding); cities, states and the country are geocoded as before. Single cities always run first, and a place already listed is searched once. Place names stay unique per country ("Rampur, Uttar Pradesh 2", "Dubai, United Arab Emirates" for the emirate), so no place is skipped as a false duplicate.
+- Picking a country shows the size of the job (places per level × sectors, and the fewest days it can take); the run panel shows "Villages · 12 of 3,433 · Uttar Pradesh".
+- Place data from GeoNames (CC BY 4.0): `cities1000`, `admin1CodesASCII` and `countryInfo`, downloaded once (~10 MB) into `data/geo/`. New `pipeline/geo.py` and `pipeline/test_geo.py`.
+
 ### Changed
 - **Sector dropdown.** In "What to scrape", the country comes first; once one is chosen, a **Sectors** dropdown appears with the general sectors from `sectors.txt` (edit that file to change the list). Picking one adds it as a removable chip and greys it out in the list; "Or type your own" still takes any sector. Every sector is still searched in every location.
-- Not included unless asked: a "new leads only" CSV.
 
 ## 2026-11-20: Phase A — grid search, resume, website reading, back-off, LinkedIn via Brave
 

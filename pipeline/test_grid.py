@@ -55,4 +55,36 @@ assert grid.next_run(con, f) is None and grid.progress(con) == (4, 4)
 con = p.db(":memory:")
 run = grid.next_run(con, fake([None]))
 assert run["mode"] == "plain" and run["location"] == "Dubai"
+
+# "All of <country>": single cities first (wherever they sit in the list), then the country's places in order
+PLACES = {"AE": [
+    {"location": "Hatta", "query": "Hatta, Dubai", "bbox": "24.78,56.09,24.82,56.13", "level": "village", "state": "Dubai", "n": 1, "of": 1},
+    {"location": "Dubai", "query": "Dubai, Dubai", "bbox": None, "level": "city", "state": "Dubai", "n": 1, "of": 2},
+    {"location": "Sharjah", "query": "Sharjah, Sharjah", "bbox": None, "level": "city", "state": "Sharjah", "n": 2, "of": 2}]}
+load = lambda cc: PLACES[cc]
+TARGETS["niches.txt"] = ["dentist"]
+TARGETS["cities.txt"] = ["*,AE", "London,GB", "Dubai,AE"]
+assert [loc for loc, cc, t in grid.expand(grid.targets()[1], load)] == ["London", "Dubai", "Hatta", "Sharjah"]  # Dubai once
+
+con = p.db(":memory:")
+f = fake([None, None, ["25.2", "25.4", "55.3", "55.6"]])
+run = grid.next_run(con, f, load)
+assert run["location"] == "London" and run["area"] is None
+con.executemany("INSERT INTO queries(q) VALUES (?)", [(k,) for k in run["keys"]])
+assert grid.next_run(con, f, load)["location"] == "Dubai"
+con.execute("INSERT INTO queries(q) VALUES ('dentist in Dubai')")
+run = grid.next_run(con, f, load)  # a village: its own box, no geocoding
+assert run["location"] == "Hatta" and run["mode"] == "grid" and run["bbox"] == "24.78,56.09,24.82,56.13" and len(f.calls) == 2
+assert run["area"] == {"level": "village", "n": 1, "of": 1, "state": "Dubai"}
+assert run["inputs"] == ["dentist #!#AE|dentist|Hatta"]
+assert grid.progress(con, load) == (2, 4)
+con.execute("INSERT INTO queries(q) VALUES ('grid:dentist|Hatta')")
+assert grid.progress(con, load) == (3, 4)  # a given box counts as grid mode without a cached geocode
+run = grid.next_run(con, f, load)  # a city: geocoded with its state
+assert run["location"] == "Sharjah" and run["mode"] == "grid" and "q=Sharjah%2C+Sharjah" in f.calls[-1]
+
+# GeoNames not downloadable (offline): the dashboard still counts the single cities
+def offline(cc):
+    raise OSError("no network")
+assert grid.progress(con, offline) == (2, 2)
 print("all checks passed")

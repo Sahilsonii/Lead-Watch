@@ -70,7 +70,7 @@ def all_searches():
     # country (for phone parsing), sector and searched location. Lowercased so "Dentist" == "dentist".
     return list(dict.fromkeys(
         f"{niche.lower()} in {city.strip()} #!#{cc.strip().upper()}|{niche.lower()}|{city.strip()}"
-        for city, cc in (l.rsplit(",", 1) for l in lines("cities.txt"))
+        for city, cc in (l.rsplit(",", 1) for l in lines("cities.txt")) if city.strip() != "*"  # whole country: grid.py
         for niche in lines("niches.txt")))
 
 

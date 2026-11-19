@@ -63,8 +63,8 @@ flowchart LR
 <details>
 <summary><b>Step by step</b></summary>
 
-1. **Pick** the next location that still has sectors to search.
-2. **Scrape** it with [gosom/google-maps-scraper](https://github.com/gosom/google-maps-scraper) in Docker. A location up to 2,500 km² (a city or district) is searched as a **grid** of 4 km cells, which finds far more than the ~120 places Google returns for one search. Bigger areas (whole countries) fall back to one plain search per sector.
+1. **Pick** the next location that still has sectors to search. Single cities always come first, then any [whole country](#-whole-country-search), place by place.
+2. **Scrape** it with [gosom/google-maps-scraper](https://github.com/gosom/google-maps-scraper) in Docker. A location up to 2,500 km² (a city or district) is searched as a **grid** of 4 km cells, which finds far more than the ~120 places Google returns for one search. Bigger areas (states, whole countries) fall back to one plain search per sector.
 3. **Check** whether Google is blocking the IP, and back off if so ([details](#-when-google-blocks)).
 4. **Read** up to 300 business websites politely: robots.txt first, one page at a time per site, 1–2 s apart, at most 4 pages each (home, contact, about, team).
 5. **Look up** missing owner names through Brave Search, if you turned it on ([LinkedIn names](#-linkedin-names-optional)).
@@ -88,6 +88,22 @@ flowchart LR
 One local page at `http://localhost:8765` with:
 
 - **What to scrape:** pick a country (and cities, if you like), then choose sectors from the dropdown that appears, or type your own. Press **Save targets**. The dropdown's list lives in `sectors.txt`.
+
+### 🌍 Whole-country search
+
+Pick a country, leave cities empty and press **Add**: the chip reads **All of India**. Lead Watch then works through the whole country by itself, one place per cycle, **smallest areas first**:
+
+| Order | Level | What it is | How it is searched |
+|---|---|---|---|
+| 1 | Villages | 1,000–15,000 people | grid over a 4 km box around the village |
+| 2 | Towns | 15,000–100,000 people | grid over an 8 km box around the town |
+| 3 | Cities | 100,000+ people | grid over the city's real outline (OpenStreetMap) |
+| 4 | States | each state or region | plain search per sector |
+| 5 | Country | the whole country | plain search per sector |
+
+Inside each level the least populated place goes first. Cities you add yourself always run before any country's places, and a place you already listed is searched once. Picking a country shows the size of the job (for India: 7,213 places, so at least 151 days at one place per 30-minute cycle), and the run panel shows where the sweep is ("Villages · 12 of 3,433 · Uttar Pradesh").
+
+Place data comes from [GeoNames](https://www.geonames.org/) (CC BY 4.0), downloaded once (about 10 MB) into `data/geo/` the first time you pick a country.
 - **Start / Stop:** the choice survives a reboot. If the loop was running, it resumes by itself.
 - **Run & health:** the current location, grid cell progress, Google's status, websites read and LinkedIn usage.
 - **Light / dark** toggle that remembers your choice.
@@ -252,7 +268,7 @@ Each test is a plain Python script with asserts, no test runner needed.
 
 ```powershell
 cd pipeline
-foreach ($t in "process","grid","dashboard","backoff","contacts","enrich","linkedin") { ..\.venv\Scripts\python "test_$t.py" }
+foreach ($t in "process","grid","geo","dashboard","backoff","contacts","enrich","linkedin") { ..\.venv\Scripts\python "test_$t.py" }
 ```
 
 <details>
@@ -262,6 +278,7 @@ foreach ($t in "process","grid","dashboard","backoff","contacts","enrich","linke
 pipeline/
   dashboard.py / .html   local dashboard, Start/Stop, the run loop
   grid.py                plans each run as a grid of map cells (or plain searches)
+  geo.py                 every village, town, city and state of a country (GeoNames)
   backoff.py             block detection and pause doubling
   enrich.py              polite website reader (robots.txt, one request at a time)
   contacts.py            email, phone, owner name and social link extraction
@@ -271,9 +288,9 @@ pipeline/
 deploy/lead-pipeline.service   systemd unit for 24/7 hosting
 niches.txt, cities.txt         default sectors and locations
 blocked_domains.txt            domains that are never read
-data/                          leads.db, leads.csv, runner.log (git-ignored)
+data/                          leads.db, leads.csv, runner.log, geo/ (git-ignored)
 ```
 
 </details>
 
-See [CHANGELOG.md](CHANGELOG.md) for what changed. Released under the [MIT License](LICENSE).
+See [CHANGELOG.md](CHANGELOG.md) for what changed. Released under the [MIT License](LICENSE). Place data © [GeoNames](https://www.geonames.org/), CC BY 4.0.

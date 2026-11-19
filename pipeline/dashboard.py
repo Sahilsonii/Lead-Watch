@@ -21,6 +21,7 @@ import phonenumbers
 
 import backoff
 import enrich
+import geo
 import grid
 import linkedin
 import process as p
@@ -181,7 +182,7 @@ def run_info(run, log_text):
     if not run:
         return None
     info = {"location": run.get("location"), "mode": run["mode"], "bbox": run["bbox"], "area_km2": None,
-            "cells_total": None, "cells_done": backoff.search_jobs(log_text)[0]}
+            "cells_total": None, "cells_done": backoff.search_jobs(log_text)[0], "area": run.get("area")}
     if run["mode"] == "grid":
         s, w, n, e = map(float, run["bbox"].split(","))
         height = (n - s) * 111.32
@@ -285,6 +286,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api":
             self.send(json.dumps(stats()).encode())
+        elif self.path.startswith("/api/country?cc="):  # size of an "All of <country>" job
+            cc = self.path.split("=", 1)[1].upper()
+            if cc not in phonenumbers.SUPPORTED_REGIONS:
+                return self.send(b'{"error":"unknown country"}', code=404)
+            try:
+                self.send(json.dumps(geo.summary(geo.towns(cc))).encode())
+            except OSError as e:  # first use downloads GeoNames; offline -> say so instead of hanging the page
+                self.send(json.dumps({"error": f"GeoNames download failed: {e}"}).encode(), code=502)
         else:
             self.send(PAGE, "text/html")
 
