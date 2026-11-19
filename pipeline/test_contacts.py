@@ -86,4 +86,10 @@ assert time.time() - t < 3, time.time() - t
 
 assert c.phones_in(page('<a href="tel:+97145662262">Call</a>'), "AE") == ["+97145662262"]
 assert c.phones_in(page("Mobile: 050 123 4567"), "AE") == ["+971501234567"]
+
+# accented and Mc names: the whole name or none, never the tail of one
+assert c.owner_from_text("Zoë Anne Smith, Founder", "Smile Clinic")[0] == "Zoë Anne Smith"
+assert c.owner_from_text("Chloë Grace Martin, CEO", "Smile Clinic")[0] == "Chloë Grace Martin"
+assert "Renée" in c.owner_from_text("Dr. Renée Marie Dubois - Owner", "Smile Clinic")[0]
+assert (c.owner_from_text("Mary McKenzie Ross, Founder", "Smile Clinic") or [None])[0] != "Kenzie Ross"
 print("all checks passed")

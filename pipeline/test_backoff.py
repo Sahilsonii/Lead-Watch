@@ -18,6 +18,8 @@ ok_log = "\n".join([FOUND, search_job("success"), PLACE_JOB, PLACE_JOB])
 
 assert b.classify_run(0, False, 40, 2, ok_log) == "ok"
 assert b.classify_run(0, False, 0, 2, ok_log) == "blocked"                       # nothing from a real batch
+# every search finished cleanly and Google simply had nothing (a small district, a rare sector): not a block
+assert b.classify_run(0, False, 0, 2, "\n".join([search_job("success")] * 2)) == "ok"
 assert b.classify_run(0, False, 40, 2, ok_log + "\nOur systems have detected Unusual Traffic") == "blocked"
 assert b.classify_run(0, False, 40, 2, ok_log + '\n<div id="infoDiv0"><a href="https://www.google.com/policies/terms/">') == "blocked"
 assert b.classify_run(0, False, 40, 3, "\n".join([search_job("failed"), search_job("error"), search_job("success")])) == "blocked"

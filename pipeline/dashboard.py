@@ -12,6 +12,7 @@ import os
 import subprocess
 import threading
 import time
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -89,21 +90,27 @@ class Runner:
 
     def loop(self):
         while not self.stop.is_set():
-            run = load_state().get("run")  # unfinished run (Stop, crash, reboot): resume it as it was
-            resume = bool(run)
-            if not run:
-                self.phase = "planning"
-                run = grid.next_run(p.db())
+            try:
+                run = load_state().get("run")  # unfinished run (Stop, crash, reboot): resume it as it was
+                resume = bool(run)
+                if not run:
+                    self.phase = "planning"
+                    run = grid.next_run(p.db())
+                    if run:
+                        run = save_state(run={**run, "results": f"raw-{time.strftime('%Y%m%d-%H%M%S')}.json",
+                                              "resumes": 0})["run"]
                 if run:
-                    run = save_state(run={**run, "results": f"raw-{time.strftime('%Y%m%d-%H%M%S')}.json",
-                                          "resumes": 0})["run"]
-            if run:
-                self.scrape_once(run, resume)
-                wait = load_state().get("blocks", {}).get("google", {}).get("pause_min", PAUSE_MIN) * 60
-            else:
-                self.phase = "done"  # every sector x location searched; re-check for new targets often
-                wait = 30
-            self.enrich_cycle(scraped=bool(run))  # runs even when Google is blocking: other hosts
+                    self.scrape_once(run, resume)
+                    wait = load_state().get("blocks", {}).get("google", {}).get("pause_min", PAUSE_MIN) * 60
+                else:
+                    self.phase = "done"  # every sector x location searched; re-check for new targets often
+                    wait = 30
+                self.enrich_cycle(scraped=bool(run))  # runs even when Google is blocking: other hosts
+            except Exception:  # leads.csv open in Excel, a truncated file, a locked DB: log it, rest, go on
+                with open(p.DATA / "runner.log", "a", encoding="utf-8") as f:
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\n{traceback.format_exc()}\n")
+                self.phase = "error, trying again after the pause (see data/runner.log)"
+                wait = PAUSE_MIN * 60
             self.stop.wait(wait)
         if self.phase != backoff.STOP_MESSAGE:
             self.phase = "stopped"
@@ -113,18 +120,20 @@ class Runner:
         (p.DATA / "batch.txt").write_text("\n".join(run["inputs"]) + "\n", encoding="utf-8")
         self.known_at_start = {r[0] for r in p.db().execute("SELECT place_id FROM leads")}
         self.phase = "scraping"
-        with open(p.DATA / "scraper.log", "a" if resume else "w") as log:
+        log_path = p.DATA / "scraper.log"
+        start = log_path.stat().st_size if resume and log_path.exists() else 0
+        with open(log_path, "a" if resume else "w") as log:
             code = subprocess.run(docker_args(run, out.name, resume), stdout=log, stderr=subprocess.STDOUT).returncode
         stopped = self.stop.is_set()
         if not out.exists():  # no output at all: the scraper never started (Docker down), not a Google block
             kind = "error"
         else:
-            log_text = (p.DATA / "scraper.log").read_text(encoding="utf-8", errors="ignore")
+            log_text = log_path.read_bytes()[start:].decode("utf-8", "ignore")  # this attempt only: old block lines are history
             kind = backoff.classify_run(code, stopped, len(live_rows(out)), len(run["inputs"]), log_text)
         finished = kind == "ok" and code == 0 and not stopped
         if kind == "error":  # crashed: resume a couple of times, then start over later
             run = {**run, "resumes": run["resumes"] + 1}
-        save_state(run=None if finished or run["resumes"] > MAX_RESUMES else run)  # blocked: resume after the pause
+        keep = None if finished or run["resumes"] > MAX_RESUMES else run  # blocked: resume after the pause
         if not stopped:
             block = backoff.after_run(load_state().get("blocks", {}).get("google", {}), kind, PAUSE_MIN)
             save_state(blocks={**load_state().get("blocks", {}), "google": block},
@@ -134,13 +143,14 @@ class Runner:
                 self.stop.set()
         auto_stopped = not stopped and self.stop.is_set()
         if not out.exists():
+            save_state(run=keep)
             self.phase = backoff.STOP_MESSAGE if auto_stopped else f"scraper failed (exit {code}), see data/scraper.log"
             return
         self.phase = "verifying emails"
         # Stopped or crashed mid-run: keep what was found, but leave the searches queued.
         new, dup = p.ingest(out, run["keys"] if finished else [])
         state = load_state()
-        save_state(dups_total=state.get("dups_total", 0) + dup,
+        save_state(run=keep, dups_total=state.get("dups_total", 0) + dup,  # cleared only once its results are in
                    last_run={"file": out.name, "new": new, "dups": dup, "at": time.strftime("%H:%M"), "class": kind})
         self.phase = backoff.STOP_MESSAGE if auto_stopped else "resting"
 

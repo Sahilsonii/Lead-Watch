@@ -222,12 +222,13 @@ def save_enrichment(con, place_id, res):
     if owner and contacts.looks_like_company(owner[0], name or ""):
         owner = None
     site_phone = None if phone or not res["phones"] else res["phones"][0]
-    con.execute("""
-        UPDATE leads SET email = COALESCE(?, email), email_status = COALESCE(?, email_status),
-            owner_name = ?, owner_role = ?, owner_source = ?, social_links = ?, site_status = ?, site_matches = ?,
+    owner_sql = "owner_name = ?, owner_role = ?, owner_source = ?," if owner else ""  # never erase an earlier name
+    con.execute(f"""
+        UPDATE leads SET email = COALESCE(?, email), email_status = COALESCE(?, email_status), {owner_sql}
+            social_links = ?, site_status = ?, site_matches = ?,
             enriched_at = CURRENT_TIMESTAMP, phone = COALESCE(?, phone), phone_e164 = COALESCE(phone_e164, ?)
         WHERE place_id = ?""",
-        (email, status, *(owner or (None, None, None)), " ".join(res["social"]), res["status"],
+        (email, status, *(owner or ()), " ".join(res["social"]), res["status"],
          int(res["matches"]), site_phone, site_phone and to_e164(site_phone, split_input(query)[0]), place_id))
     con.commit()
     return bool(owner)

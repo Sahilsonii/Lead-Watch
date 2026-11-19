@@ -15,7 +15,7 @@ Each cycle it:
 
 - **Searches:** a sector × location runs once, ever. Grid and plain searches are tracked separately.
 - **Places:** stored by Google place id, so a business found by two searches is saved once.
-- **Websites:** each site is read once, ever.
+- **Websites:** each site is read once, ever. Leads that share a website (a chain) share one read.
 - **Contacts:** in the export, a repeated email or phone (chains, duplicate listings) appears once.
 
 ## Export columns (20)
@@ -58,11 +58,13 @@ Knobs (environment variables):
 
 ## When Google blocks
 
-A run counts as blocked when it finds nothing, when most searches fail, or when Google shows its "unusual traffic" page. Each block doubles the pause (30 → 60 → 120 → 240 min) and a clean run resets it. After four blocks in a row the loop **stops itself** and the dashboard says "Google is blocking this IP. Stopped to protect it." Wait a day or move to another IP, then press Start. An interrupted run (Stop, crash, reboot, block) resumes where it left off rather than starting over. Website reading and LinkedIn lookups keep going while Google blocks, because they use other hosts.
+A run counts as blocked when most searches fail, when Google shows its "unusual traffic" page, or when it finds nothing without every search finishing cleanly. (Searches that all finish cleanly and find nothing just mean an empty area.) Each block doubles the pause (30 → 60 → 120 → 240 min) and a clean run resets it. After four blocks in a row the loop **stops itself** and the dashboard says "Google is blocking this IP. Stopped to protect it." Wait a day or move to another IP, then press Start. An interrupted run (Stop, crash, reboot, block) resumes where it left off rather than starting over. Website reading and LinkedIn lookups keep going while Google blocks, because they use other hosts.
+
+If anything else fails (for example `leads.csv` is open in Excel), the loop writes the error to `data/runner.log`, shows it on the dashboard, and tries again after the pause.
 
 ## LinkedIn names (optional, via Brave Search)
 
-Lead Watch never opens LinkedIn. For leads with no better owner name, it searches Brave for `"Business Name" City site:linkedin.com` and reads the result titles ("Sara Ali - Founder - Smile Clinic | LinkedIn"). A profile counts only if the result mentions the business. Each lead is searched once.
+Lead Watch never opens LinkedIn. For leads with no better owner name once their website has been read, it searches Brave for `"Business Name" City site:linkedin.com` and reads the result titles ("Sara Ali - Founder - Smile Clinic | LinkedIn"). A profile counts only if the result mentions the business. Each lead is searched once.
 
 To turn it on (a human step):
 
@@ -70,7 +72,7 @@ To turn it on (a human step):
 2. In the Brave dashboard, set a **spending limit**, so you can never be charged beyond the credit.
 3. Set the key in your environment, never in a file: `$env:BRAVE_API_KEY = "..."`, then start the dashboard.
 
-Lead Watch also stops at `BRAVE_MONTHLY_CAP` and on Brave's "limit reached" responses.
+Lead Watch also stops at `BRAVE_MONTHLY_CAP`, on Brave's "limit reached" responses, and when Brave rejects the key.
 
 **Personal data:** owner names and profile links are personal data under GDPR and similar laws. Keep a lawful basis for holding them (usually legitimate interest, documented), tell people where you got their details when you first contact them, and delete them on request.
 
@@ -91,7 +93,7 @@ The dashboard listens on localhost only, because the Start/Stop buttons must not
 ## Staying safe
 
 - **Google:** keep `CONCURRENCY` at 1–2 and the pause in place; the back-off above handles blocks. Never solve or bypass CAPTCHAs.
-- **Websites:** Lead Watch identifies itself (`LeadWatch/0.2 … respects robots.txt`), obeys robots.txt and Crawl-delay, and skips any site that shows a bot check. It never tries to pass one. A site asking for more than 30 s between pages gets its homepage read only.
+- **Websites:** Lead Watch identifies itself (`LeadWatch/0.2 … respects robots.txt`), obeys robots.txt and Crawl-delay, and skips any site that shows a bot check. It never tries to pass one. A website that redirects to Facebook, LinkedIn or a directory is not followed there; the link is kept under Social Links. A site asking for more than 30 s between pages gets its homepage read only.
 - **Email:** most clouds block port 25, so SMTP checks usually fall back to `mx_ok` (the domain receives mail; the mailbox itself is not proven).
 - **Law:** scraping may breach Google's terms, and contacting leads is regulated (GDPR, PECR, CAN-SPAM, CASL). WhatsApp bans accounts that send unsolicited bulk messages.
 

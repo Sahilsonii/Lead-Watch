@@ -225,7 +225,9 @@ def owner_from_json_ld(objs, business):
     return (found[0][0], found[0][1]) if found else None
 
 
-NAME = r"((?:Dr\.?\s+)?[A-Z][a-z'-]{1,30}(?:\s+[A-Z][a-z'-]{1,30}){1,2})"
+# Latin-1 letters keep accented names whole (Zoë, Renée); the lookbehind stops a match starting mid-word
+# ("Kenzie" inside "McKenzie"), so an unreadable name gives no owner rather than the tail of one.
+NAME = r"(?<![\w'’-])((?:Dr\.?\s+)?[A-ZÀ-ÖØ-Þ][a-zß-öø-ÿ'’-]{1,30}(?:\s+[A-ZÀ-ÖØ-Þ][a-zß-öø-ÿ'’-]{1,30}){1,2})"
 SEP = r"\s*[,:|\u2013\u2014-]\s*"
 NAME_ROLE_RE = re.compile(NAME + SEP + rf"(?:our\s+|the\s+)?(?i:({ROLE_ALT}))\b")
 ROLE_NAME_RE = re.compile(rf"(?i:\b({ROLE_ALT}))" + SEP + NAME)

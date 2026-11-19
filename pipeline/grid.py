@@ -24,12 +24,12 @@ def http_get_json(url):
 
 
 def geocode(name, cc, fetch=http_get_json):
-    """(min_lat, min_lon, max_lat, max_lon) from Nominatim, or None."""
+    """(min_lat, min_lon, max_lat, max_lon) from Nominatim, None when it finds nothing. Network errors raise."""
     q = urllib.parse.urlencode({"q": name, "countrycodes": cc.lower(), "format": "json", "limit": 1})
+    hits = fetch(f"{NOMINATIM}?{q}")
     try:
-        hits = fetch(f"{NOMINATIM}?{q}")
         south, north, west, east = map(float, hits[0]["boundingbox"])  # Nominatim's order
-    except Exception:  # network error, empty result, odd payload: all mean "no box"
+    except (IndexError, KeyError, TypeError, ValueError):  # empty result or odd payload: no box
         return None
     return south, west, north, east
 
@@ -49,8 +49,12 @@ def location_bbox(con, name, cc, fetch=http_get_json):
     """gosom's "minLat,minLon,maxLat,maxLon" for a grid-sized location, else None. Geocodes once, ever."""
     row = cached_location(con, name, cc)
     if row is None:
-        box = geocode(name, cc, fetch)
-        time.sleep(1.1)  # Nominatim allows 1 request/s
+        try:
+            box = geocode(name, cc, fetch)
+        except Exception:  # Nominatim down or rate-limiting: plain searches this time, geocode again next plan
+            return None
+        finally:
+            time.sleep(1.1)  # Nominatim allows 1 request/s
         row = (",".join(map(str, box)), bbox_area_km2(box)) if box else (None, None)
         con.execute("INSERT INTO locations(name, cc, bbox, area_km2) VALUES (?,?,?,?)", (name, cc, *row))
         con.commit()

@@ -7,7 +7,7 @@ Kept up to date after every step, so the work can continue from any account or s
 **Where things stand (2026-11-20 01:50 IST)**
 - Phase A is built on branch `feat/phase-a` (not merged into `main` yet). All test scripts pass: `pipeline/test_*.py`.
 - A live test ran on 2026-11-20 (dentists, Dubai Marina): grid search, Stop then Start resume, website reading and the 20-column CSV all worked. Four bugs it found are fixed (see Phase A below).
-- A final whole-branch review of Phase A was started. Its findings still need a fix pass, then the merge decision (Sahil's call).
+- 2026-11-20 02:05 IST: the final whole-branch review of Phase A found 2 critical and 8 important problems. All 10 are fixed, each with a test that failed first; all 7 test scripts pass (see Phase A, "Fixed (final review)"). Its 11 small suggestions are listed as deferred in the task log, not done. **Next for Phase A: Sahil decides whether to merge `feat/phase-a` into `main`.**
 - Plan: `docs/superpowers/plans/2026-11-20-lead-watch-phase-a.md`. Design: `docs/superpowers/specs/2026-11-20-lead-watch-round-one-design.md`. The step-by-step task log is in `.superpowers/sdd/2026-11-20-lead-watch-phase-a/progress.md` (not in git).
 - Backups of the lead database from before the live test: `data/leads.backup.db`, `data/leads.db.bak-phase-a`.
 - 2026-11-20 01:55 IST: dark mode toggle added to the dashboard header (see Phase A, Added). Done and checked in the browser.
@@ -49,6 +49,18 @@ Agreed with Sahil so far:
 - A site with `Crawl-delay: 600` held up the cycle for over 10 minutes. Sites asking for more than 30 s between pages now get their homepage only.
 - The dashboard read gosom's resume sidecar file as the results file and stopped updating.
 - Greetings ("Hi Karen"), departments and job titles ("General Dentist") were taken as owner names.
+
+### Fixed (final review)
+- One "unusual traffic" line from an earlier attempt marked every later resume as blocked, until the loop stopped itself. Each attempt is now judged by its own log lines.
+- A business website that redirected to LinkedIn or Facebook was followed there. Those redirects are now refused before any request; the link goes to Social Links.
+- A run where every search finished cleanly but found nothing (a small area, a rare sector) counted as a block.
+- Chains sharing one website had it read once per branch, several at a time. Now each website is read once per cycle.
+- A LinkedIn name could be erased by a later website read, and lookups ran before the website was read. Lookups now wait for the website, and a site with no owner never erases a name.
+- A rejected Brave key (or Brave errors) made every eligible lead call Brave. A rejected key now stops lookups, and errors count toward the per-cycle limit.
+- One unexpected error (for example `leads.csv` open in Excel) ended the 24/7 loop. It is now logged to `data/runner.log` and the loop tries again after the pause.
+- A brief OpenStreetMap outage was remembered forever, turning a city into plain searches. Outages are no longer cached.
+- Accented owner names were cut short ("Zoë Anne Smith" became "Anne Smith"). They are now kept whole, or left empty when unreadable.
+- A finished run was cleared before its results were loaded, so a crash in between lost the run. It is now cleared after loading.
 
 ### Removed
 - `BATCH`: each cycle now covers one location's remaining sectors.

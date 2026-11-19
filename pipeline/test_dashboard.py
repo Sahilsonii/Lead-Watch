@@ -117,4 +117,38 @@ assert d.run_info(None, "") is None
 for name in ("raw-1.json", "raw-2.json", "raw-2.json.resume.json"):
     (tmp / name).write_text("{}\n")
 assert [f.name for f in d.raw_files()] == ["raw-1.json", "raw-2.json"]
+
+# a resumed run is judged by its own log lines: an old "unusual traffic" line must not mark every resume blocked
+d.save_state(run=saved, blocks={}, running=True)
+(tmp / "scraper.log").write_text("Our systems have detected unusual traffic\n")
+d.subprocess.run = fake_run(0)
+d.Runner().scrape_once(saved, resume=True)
+assert d.load_state()["run"] is None and d.load_state()["last_run"]["class"] == "ok", d.load_state()
+
+# the run is cleared only after its results are loaded: a crash while loading keeps it for a resume
+d.save_state(run=saved, blocks={})
+real_ingest = d.p.ingest
+d.p.ingest = lambda path, keys: (_ for _ in ()).throw(OSError("killed mid-ingest"))
+try:
+    d.Runner().scrape_once(saved, resume=False)
+except OSError:
+    pass
+assert d.load_state()["run"] == saved
+d.p.ingest = real_ingest
+
+# one exception (leads.csv open in Excel, a truncated line) must not end the 24/7 loop
+d.save_state(run=saved, blocks={}, running=True)
+r = d.Runner()
+tries = []
+
+
+def flaky(run, resume):
+    tries.append(1)
+    if len(tries) == 1:
+        raise PermissionError("leads.csv is open in Excel")
+    r.stop.set()
+r.scrape_once = flaky
+d.PAUSE_MIN = 0
+r.loop()
+assert len(tries) == 2 and "PermissionError" in (tmp / "runner.log").read_text()
 print("all checks passed")

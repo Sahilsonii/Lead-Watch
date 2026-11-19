@@ -24,13 +24,14 @@ assert l.pick([{**ours, "title": "SMILE CLINIC LLC - Owner - Smile Clinic"}], "S
     == ("https://ae.linkedin.com/in/sara", None, None)                  # a company "name" gives the URL only
 
 
-def fresh_db(owner_source=None):
+def fresh_db(owner_source=None, enriched=True):
     con = p.db(":memory:")
     for i in range(3):
         con.execute("""INSERT INTO leads(place_id, name, email, email_status, phone_e164, reviews, query, raw,
-                       owner_name, owner_source) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                       owner_name, owner_source, enriched_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                     (f"id{i}", "Smile Clinic", f"info{i}@smile.ae", "mx_ok", None, 50 - i, "AE|dentist|Dubai",
-                     json.dumps({"title": "Smile Clinic"}), owner_source and "Lina Haddad", owner_source))
+                     json.dumps({"title": "Smile Clinic"}), owner_source and "Lina Haddad", owner_source,
+                     "2026-11-20 01:00:00" if enriched else None))
     return con
 
 
@@ -79,4 +80,16 @@ assert con.execute("SELECT linkedin_checked_at IS NOT NULL, linkedin_url FROM le
 # an owner already found on the website is never looked up
 client, calls = brave([FOUND])
 assert l.lookup_pending(fresh_db("Website team page"), client, 10, threading.Event())["looked_up"] == 0 and not calls
+
+# a lead whose website hasn't been read yet waits: the site may still give a better name
+client, calls = brave([FOUND])
+assert l.lookup_pending(fresh_db(enriched=False), client, 10, threading.Event())["looked_up"] == 0 and not calls
+
+# a bad key stops at once; server errors still count against the per-cycle limit
+client, calls = brave([httpx.Response(401)])
+stats = l.lookup_pending(fresh_db(), client, 10, threading.Event())
+assert len(calls) == 1 and stats["skipped"] == "brave error 401", stats
+client, calls = brave([httpx.Response(503)])
+l.lookup_pending(fresh_db(), client, 2, threading.Event())
+assert len(calls) == 2, len(calls)
 print("all checks passed")

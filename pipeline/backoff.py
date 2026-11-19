@@ -25,8 +25,9 @@ def search_jobs(log_text):
 def classify_run(code, stopped, places, inputs, log_text):
     """'ok' | 'blocked' | 'error'. Stopping by hand is never a block."""
     finished, failed = search_jobs(log_text)
+    honest_empty = finished >= inputs and not failed  # every search ran clean; Google just had nothing there
     if not stopped and (
-            (inputs > 0 and places == 0)
+            (inputs > 0 and places == 0 and not honest_empty)
             or failed * 2 > finished
             or UNUSUAL.search(log_text)
             or ("infoDiv0" in log_text and "google.com/policies/terms" in log_text)):  # Google's block page

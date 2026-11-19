@@ -31,9 +31,19 @@ async def pause(seconds):  # one seam, so tests record waits instead of sleeping
     await asyncio.sleep(seconds)
 
 
-def new_client():
+class SocialRedirect(Exception):
+    """A redirect to a social or directory site. Those sites are never requested, LinkedIn above all."""
+
+
+async def refuse_social(request):  # httpx calls this before every request, redirect hops included
+    if c.is_aggregator(str(request.url)):
+        raise SocialRedirect(str(request.url))
+
+
+def new_client(**kw):
     return httpx.AsyncClient(headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=TIMEOUT_S,
-                             limits=httpx.Limits(max_connections=SITES_AT_ONCE * 2))
+                             limits=httpx.Limits(max_connections=SITES_AT_ONCE * 2),
+                             event_hooks={"request": [refuse_social]}, **kw)
 
 
 def retry_wait(response, attempt):
@@ -61,6 +71,8 @@ async def fetch(client, url):
                         if len(body) >= MAX_BYTES:
                             break
                     return r.status_code, str(r.url), bytes(body[:MAX_BYTES]).decode(r.encoding or "utf-8", "replace")
+        except SocialRedirect as social:  # status 0, no text: the caller sees where it led, nothing was read
+            return 0, str(social), ""
         except httpx.HTTPError:  # timeouts, refused connections, bad TLS, too many redirects
             return None
         await pause(wait)
@@ -146,7 +158,7 @@ async def crawl_site(client, url, business, phone, region, suffixes):
             continue
         await pause(wait)
         got = await fetch(client, link)
-        if got is None:
+        if got is None or c.is_aggregator(got[1]):
             continue
         if c.is_block_page(got[0], got[2]):
             status = "blocked"  # stop here; earlier pages were real pages, so keep what they gave
@@ -171,25 +183,32 @@ async def crawl_site(client, url, business, phone, region, suffixes):
 
 async def enrich_pending(con, limit, stop):
     """Crawl up to `limit` leads never crawled before, best contacts first, SITES_AT_ONCE sites at a time.
+    Leads sharing a website (a chain) share one crawl, so a host is never read twice at once.
     Leads without a website are marked done too (crawl_site skips them without a request)."""
     leads = con.execute(f"""
         SELECT place_id, name, website, phone, query FROM leads WHERE enriched_at IS NULL
         ORDER BY ({p.VERIFIED}) + (phone_e164 IS NOT NULL) DESC LIMIT ?""", (limit,)).fetchall()
     stats = {"crawled": 0, "names": 0, "blocked": 0}
     gate, suffixes = asyncio.Semaphore(SITES_AT_ONCE), c.load_blocked_domains()
+    sites = {}
+    for lead in leads:
+        site = (lead[2] or "").strip()
+        sites.setdefault(c.host(site if "://" in site else "https://" + site) or lead[0], []).append(lead)
 
-    async def one(client, place_id, name, website, phone, query):
+    async def one(client, group):
         async with gate:
             if stop.is_set():
                 return
+            _, name, website, phone, query = group[0]  # the chain's first lead stands in for the listing match
             try:
                 res = await crawl_site(client, website, name or "", phone, p.split_input(query)[0], suffixes)
             except Exception:  # one odd page must not stop the other sites or the 24/7 loop; not retried
                 res = result("error")
-            stats["names"] += p.save_enrichment(con, place_id, res)
-            stats["crawled"] += 1
-            stats["blocked"] += res["status"] == "blocked"
+            for place_id, *_ in group:
+                stats["names"] += p.save_enrichment(con, place_id, res)
+                stats["crawled"] += 1
+                stats["blocked"] += res["status"] == "blocked"
 
     async with new_client() as client:
-        await asyncio.gather(*(one(client, *lead) for lead in leads))
+        await asyncio.gather(*(one(client, group) for group in sites.values()))
     return stats

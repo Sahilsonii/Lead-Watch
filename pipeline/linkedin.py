@@ -69,11 +69,11 @@ def lookup_pending(con, client, limit, stop):
     headers = {"X-Subscription-Token": key, "Accept": "application/json", "User-Agent": USER_AGENT}
     rows = con.execute(f"""
         SELECT place_id, name, email, query, owner_name, owner_source FROM leads
-        WHERE linkedin_checked_at IS NULL AND ({p.VERIFIED} OR phone_e164 IS NOT NULL)
+        WHERE linkedin_checked_at IS NULL AND enriched_at IS NOT NULL AND ({p.VERIFIED} OR phone_e164 IS NOT NULL)
         ORDER BY ({p.VERIFIED}) + (phone_e164 IS NOT NULL) DESC, reviews DESC""").fetchall()
     calls = 0
     for place_id, name, email, query, owner_name, owner_source in rows:
-        if stats["looked_up"] >= limit or stop.is_set():
+        if calls >= limit or stop.is_set():  # calls, not successes: failed calls still cost time and credit
             break
         stored = {"email": email, "owner_name": owner_name, "owner_source": owner_source}
         if p.lead_owner({"title": name}, stored)[1] not in ELIGIBLE_SOURCES:
@@ -92,6 +92,9 @@ def lookup_pending(con, client, limit, stop):
             break
         if r.status_code in (402, 429):  # credit used up or rate-limited: stop, leave this lead unchecked
             stats["skipped"] = "brave limit"
+            break
+        if r.status_code in (401, 403):  # bad or revoked key: every other call would fail the same way
+            stats["skipped"] = f"brave error {r.status_code}"
             break
         if r.status_code != 200:
             continue

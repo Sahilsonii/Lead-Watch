@@ -75,6 +75,10 @@ found = {"status": "ok", "emails": {}, "phones": ["+971501234567"], "social": ["
 p.save_enrichment(con, "a", found)
 a = con.execute("SELECT owner_name, phone_e164, social_links, site_status, enriched_at FROM leads WHERE place_id='a'").fetchone()
 assert a[0] is None and a[1] == "+971501234567" and a[2] == "https://instagram.com/smile" and a[3] == "ok" and a[4], a
+# a site with no owner never erases a name found earlier (LinkedIn)
+con.execute("UPDATE leads SET owner_name='Sara Ali', owner_role='Founder', owner_source='LinkedIn search result' WHERE place_id='a'")
+p.save_enrichment(con, "a", {**found, "owner": None})
+assert con.execute("SELECT owner_name, owner_source FROM leads WHERE place_id='a'").fetchone() == ("Sara Ali", "LinkedIn search result")
 
 con.row_factory = p.sqlite3.Row
 row = p.lead_row(con.execute("SELECT * FROM leads WHERE place_id='b'").fetchone())
@@ -100,6 +104,14 @@ stats = asyncio.run(enrich.enrich_pending(con, 10, threading.Event()))
 assert stats == {"crawled": 2, "names": 2, "blocked": 0}, stats
 assert con.execute("SELECT COUNT(*) FROM leads WHERE enriched_at IS NULL").fetchone()[0] == 0
 assert asyncio.run(enrich.enrich_pending(con, 10, threading.Event()))["crawled"] == 0  # each site crawled once
+
+# a chain: two leads on one website -> the site is read once, both leads get the result
+con.execute("UPDATE leads SET enriched_at = NULL, website = 'https://smile.ae'")
+con.execute("UPDATE leads SET website = 'www.smile.ae/' WHERE place_id = 'b'")
+calls.clear()
+stats = asyncio.run(enrich.enrich_pending(con, 10, threading.Event()))
+assert len(calls) == 1 and stats["crawled"] == 2 and stats["names"] == 2, (calls, stats)
+con.execute("UPDATE leads SET website = 'https://www.facebook.com/smile' WHERE place_id = 'b'")
 
 # live run: one site that crashes the parser must not stop the others (or the runner thread)
 con.execute("UPDATE leads SET enriched_at = NULL")

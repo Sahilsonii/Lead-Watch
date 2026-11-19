@@ -31,8 +31,7 @@ def web(routes):
         if isinstance(r, Exception):
             raise r
         return r
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=True)
-    return client, hits
+    return e.new_client(transport=httpx.MockTransport(handler)), hits
 
 
 def crawl(routes, url="https://smile.ae/", phone="+971 4 566 2262"):
@@ -118,10 +117,11 @@ assert r["status"] == "ok" and "big@smile.ae" not in r["emails"]           # bey
 # a website that is really Facebook (directly or after a redirect) is skipped and kept as a social link
 r, hits = crawl({}, url="https://www.facebook.com/smile")
 assert r["status"] == "skipped" and r["social"] == ["https://www.facebook.com/smile"] and hits == []
-r, _ = crawl({"https://smile.ae/robots.txt": ROBOTS_OK,
-              "https://smile.ae/": httpx.Response(301, headers={"Location": "https://www.facebook.com/smile"}),
-              "https://www.facebook.com/smile": page("fb")})
-assert r["status"] == "skipped" and r["social"] == ["https://www.facebook.com/smile"]
+r, hits = crawl({"https://smile.ae/robots.txt": ROBOTS_OK,
+                 "https://smile.ae/": httpx.Response(301, headers={"Location": "https://www.linkedin.com/company/smile"}),
+                 "https://www.linkedin.com/company/smile": page("li")})
+assert r["status"] == "skipped" and r["social"] == ["https://www.linkedin.com/company/smile"], r
+assert not any("linkedin.com" in h for h in hits), hits                    # the redirect is never followed there
 r, hits = crawl({}, url="https://dha.gov.ae/")
 assert r["status"] == "skipped" and hits == []
 r, hits = crawl({}, url="")

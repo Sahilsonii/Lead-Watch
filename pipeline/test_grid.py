@@ -24,7 +24,11 @@ grid.time.sleep = lambda s: None  # skip the Nominatim politeness wait in tests
 # Nominatim gives [south, north, west, east] as strings; gosom wants minLat,minLon,maxLat,maxLon
 assert grid.geocode("Dubai", "AE", fake([["25.0", "25.4", "55.0", "55.6"]])) == (25.0, 55.0, 25.4, 55.6)
 assert grid.geocode("Nowhere", "AE", fake([None])) is None
-assert grid.geocode("Dubai", "AE", fake([OSError("down")])) is None
+
+# a Nominatim outage is not remembered: the next plan geocodes again
+con = p.db(":memory:")
+assert grid.location_bbox(con, "Dubai", "AE", fake([OSError("down")])) is None
+assert grid.cached_location(con, "Dubai", "AE") is None
 assert 2680 < grid.bbox_area_km2((25.0, 55.0, 25.4, 55.6)) < 2700  # 44.5 km x 60.4 km
 
 # a city-sized box -> one grid run over all its sectors
