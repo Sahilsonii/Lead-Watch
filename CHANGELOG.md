@@ -1,5 +1,26 @@
 # Changelog
 
+## In progress — read this first when picking the work back up
+
+Kept up to date after every step, so the work can continue from any account or session.
+
+**Where things stand (2026-11-20 01:50 IST)**
+- Phase A is built on branch `feat/phase-a` (not merged into `main` yet). All test scripts pass: `pipeline/test_*.py`.
+- A live test ran on 2026-11-20 (dentists, Dubai Marina): grid search, Stop then Start resume, website reading and the 20-column CSV all worked. Four bugs it found are fixed (see Phase A below).
+- A final whole-branch review of Phase A was started. Its findings still need a fix pass, then the merge decision (Sahil's call).
+- Plan: `docs/superpowers/plans/2026-11-20-lead-watch-phase-a.md`. Design: `docs/superpowers/specs/2026-11-20-lead-watch-round-one-design.md`. The step-by-step task log is in `.superpowers/sdd/2026-11-20-lead-watch-phase-a/progress.md` (not in git).
+- Backups of the lead database from before the live test: `data/leads.backup.db`, `data/leads.db.bak-phase-a`.
+
+**Next: whole-country search and a sector dropdown (being designed, nothing built yet)**
+Agreed with Sahil so far:
+- Choosing a country with no cities adds an "All of <country>" target, replacing today's single whole-country search.
+- States, regions and towns come from GeoNames (free, CC BY): towns of 15,000+ people, downloaded once into `data/geo/`.
+- Order: the biggest state (by population) first; inside each state, the biggest town first; one town per run with all sectors. Existing single cities stay; a town already listed is searched once. GeoNames neighborhood entries are skipped.
+- The dashboard shows the counts when a country is picked (states, towns, × sectors = searches), and the Run & health panel shows "state N of M, town N of M".
+- Each town is geocoded and grid-searched like Phase A.
+- The sectors text box becomes a dropdown that opens after a country is chosen and covers as many business types as possible (the source of that list is being decided).
+- Not included unless asked: a "new leads only" CSV.
+
 ## 2026-11-20: Phase A — grid search, resume, website reading, back-off, LinkedIn via Brave
 
 ### Added
