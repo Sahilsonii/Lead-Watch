@@ -5,9 +5,9 @@
 Kept up to date after every step, so the work can continue from any account or session.
 
 **Where things stand (2026-11-20 01:50 IST)**
-- Phase A is built on branch `feat/phase-a` (not merged into `main` yet). All test scripts pass: `pipeline/test_*.py`.
+- 2026-11-20 02:03 IST: Phase A is **merged into `main`** (Sahil's call); the `feat/phase-a` branch is deleted. All test scripts pass on `main`: `pipeline/test_*.py`.
 - A live test ran on 2026-11-20 (dentists, Dubai Marina): grid search, Stop then Start resume, website reading and the 20-column CSV all worked. Four bugs it found are fixed (see Phase A below).
-- 2026-11-20 02:05 IST: the final whole-branch review of Phase A found 2 critical and 8 important problems. All 10 are fixed, each with a test that failed first; all 7 test scripts pass (see Phase A, "Fixed (final review)"). Its 11 small suggestions are listed as deferred in the task log, not done. **Next for Phase A: Sahil decides whether to merge `feat/phase-a` into `main`.**
+- 2026-11-20 02:05 IST: the final whole-branch review of Phase A found 2 critical and 8 important problems. All 10 are fixed, each with a test that failed first; all 7 test scripts pass (see Phase A, "Fixed (final review)"). Its 11 small suggestions are listed as deferred in the task log, not done.
 - Plan: `docs/superpowers/plans/2026-11-20-lead-watch-phase-a.md`. Design: `docs/superpowers/specs/2026-11-20-lead-watch-round-one-design.md`. The step-by-step task log is in `.superpowers/sdd/2026-11-20-lead-watch-phase-a/progress.md` (not in git).
 - Backups of the lead database from before the live test: `data/leads.backup.db`, `data/leads.db.bak-phase-a`.
 - 2026-11-20 01:55 IST: dark mode toggle added to the dashboard header (see Phase A, Added). Done and checked in the browser.
