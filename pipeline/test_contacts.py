@@ -69,6 +69,12 @@ assert not c.is_block_page(200, "<html><body>" + "contact us " * 20 +
                            "<script src='https://challenges.cloudflare.com/turnstile/v0/api.js'></script></body></html>")
 assert c.is_block_page(503, "<html><body>Checking your browser <script src='https://challenges.cloudflare.com/x'></script></body></html>")
 
+# long unbroken text (minified pages) must not make the email patterns backtrack for minutes
+import time
+t = time.time()
+assert c.emails_in(page("x" * 200_000 + " end@smile.ae")) == {"end@smile.ae": None}
+assert time.time() - t < 3, time.time() - t
+
 assert c.phones_in(page('<a href="tel:+97145662262">Call</a>'), "AE") == ["+97145662262"]
 assert c.phones_in(page("Mobile: 050 123 4567"), "AE") == ["+971501234567"]
 print("all checks passed")

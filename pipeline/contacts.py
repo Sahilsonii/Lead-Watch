@@ -102,12 +102,15 @@ def clean_person(name, business=""):
 
 
 # --- emails ------------------------------------------------------------------------------------------
-EMAIL = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+# Bounded parts (RFC limits) and a token-start lookbehind keep these linear on long minified text;
+# unbounded "+" here backtracked quadratically (20k chars took >20 s).
+LOCAL = r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}"
+EMAIL = LOCAL + r"@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}"
 LOOSE_RE = re.compile(EMAIL)
-ANGLE_RE = re.compile(r"([A-Z][\w.'-]*(?:\s+[A-Z][\w.'-]*){1,3})\s*<\s*(" + EMAIL + r")\s*>")
+ANGLE_RE = re.compile(r"(?<![\w.'-])([A-Z][\w.'-]{0,40}(?:\s+[A-Z][\w.'-]{0,40}){1,3})\s*<\s*(" + EMAIL + r")\s*>")
 # "at" must be bracketed, so plain sentences ("meet us at clinic dot com") never turn into addresses
-OBFUSCATED_RE = re.compile(r"([A-Za-z0-9._%+-]+)\s*[\[({]\s*at\s*[\])}]\s*([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*)"
-                           r"(?:\s*[\[({]?\s*dot\s*[\])}]?\s*([A-Za-z]{2,}))?", re.I)
+OBFUSCATED_RE = re.compile("(" + LOCAL + r")\s*[\[({]\s*at\s*[\])}]\s*([A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,5})"
+                           r"(?:\s*[\[({]?\s*dot\s*[\])}]?\s*([A-Za-z]{2,24}))?", re.I)
 
 
 def emails_in(page):
@@ -211,7 +214,7 @@ def owner_from_json_ld(objs, business):
     return (found[0][0], found[0][1]) if found else None
 
 
-NAME = r"((?:Dr\.?\s+)?[A-Z][a-z'-]+(?:\s+[A-Z][a-z'-]+){1,2})"
+NAME = r"((?:Dr\.?\s+)?[A-Z][a-z'-]{1,30}(?:\s+[A-Z][a-z'-]{1,30}){1,2})"
 SEP = r"\s*[,:|\u2013\u2014-]\s*"
 NAME_ROLE_RE = re.compile(NAME + SEP + rf"(?:our\s+|the\s+)?(?i:({ROLE_ALT}))\b")
 ROLE_NAME_RE = re.compile(rf"(?i:\b({ROLE_ALT}))" + SEP + NAME)
