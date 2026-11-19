@@ -12,6 +12,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 
 import contacts as c
+import process as p
 from grid import USER_AGENT
 
 RETRY_CODES = {408, 429, 500, 502, 503, 504, 522, 524}
@@ -163,4 +164,27 @@ async def crawl_site(client, url, business, phone, region, suffixes):
     owner = (ld and (*ld, "Website structured data")) or (text and (*text, "Website team page")) \
         or (named and (*named, "Website email link"))
     return result(status, emails=emails, phones=phones, social=social, owner=owner, pages=len(pages),
-                  matches=any(c.site_matches_listing(p.text, phone, business) for _, p in pages))
+                  matches=any(c.site_matches_listing(pg.text, phone, business) for _, pg in pages))
+
+
+async def enrich_pending(con, limit, stop):
+    """Crawl up to `limit` leads never crawled before, best contacts first, SITES_AT_ONCE sites at a time.
+    Leads without a website are marked done too (crawl_site skips them without a request)."""
+    leads = con.execute(f"""
+        SELECT place_id, name, website, phone, query FROM leads WHERE enriched_at IS NULL
+        ORDER BY ({p.VERIFIED}) + (phone_e164 IS NOT NULL) DESC LIMIT ?""", (limit,)).fetchall()
+    stats = {"crawled": 0, "names": 0, "blocked": 0}
+    gate, suffixes = asyncio.Semaphore(SITES_AT_ONCE), c.load_blocked_domains()
+
+    async def one(client, place_id, name, website, phone, query):
+        async with gate:
+            if stop.is_set():
+                return
+            res = await crawl_site(client, website, name or "", phone, p.split_input(query)[0], suffixes)
+            stats["names"] += p.save_enrichment(con, place_id, res)
+            stats["crawled"] += 1
+            stats["blocked"] += res["status"] == "blocked"
+
+    async with new_client() as client:
+        await asyncio.gather(*(one(client, *lead) for lead in leads))
+    return stats

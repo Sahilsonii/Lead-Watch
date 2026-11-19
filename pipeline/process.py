@@ -20,6 +20,8 @@ import dns.resolver
 import phonenumbers
 from phonenumbers import PhoneNumberType as T
 
+import contacts
+
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
 SMTP_CHECK = os.environ.get("SMTP_CHECK") == "1"  # needs outbound port 25, which most clouds block
@@ -52,7 +54,10 @@ def db(path=None):
         CREATE TABLE IF NOT EXISTS locations(
             name TEXT, cc TEXT, bbox TEXT, area_km2 REAL, PRIMARY KEY(name, cc));
     """)
-    ensure_columns(con, "leads", {"raw": "TEXT"})  # databases from before the 18-column export
+    ensure_columns(con, "leads", {  # databases from before the 18- and 20-column exports
+        "raw": "TEXT", "owner_name": "TEXT", "owner_role": "TEXT", "owner_source": "TEXT", "social_links": "TEXT",
+        "site_status": "TEXT", "site_matches": "INTEGER", "enriched_at": "TEXT", "linkedin_url": "TEXT",
+        "linkedin_checked_at": "TEXT", "sources": "TEXT DEFAULT 'google_maps'"})
     return con
 
 
@@ -195,11 +200,34 @@ def ingest(path, done_keys=()):
     return new, dup
 
 
+def save_enrichment(con, place_id, res):
+    """Store one website crawl result (enrich.crawl_site). Returns True when an owner name was stored."""
+    name, website, raw, phone, query = con.execute(
+        "SELECT name, website, raw, phone, query FROM leads WHERE place_id = ?", (place_id,)).fetchone()
+    maps_emails = json.loads(raw or "{}").get("emails") or []
+    email, status = best_email(list(maps_emails) + list(res["emails"]), website)
+    owner = res["owner"]
+    if owner and contacts.looks_like_company(owner[0], name or ""):
+        owner = None
+    site_phone = None if phone or not res["phones"] else res["phones"][0]
+    con.execute("""
+        UPDATE leads SET email = COALESCE(?, email), email_status = COALESCE(?, email_status),
+            owner_name = ?, owner_role = ?, owner_source = ?, social_links = ?, site_status = ?, site_matches = ?,
+            enriched_at = CURRENT_TIMESTAMP, phone = COALESCE(?, phone), phone_e164 = COALESCE(phone_e164, ?)
+        WHERE place_id = ?""",
+        (email, status, *(owner or (None, None, None)), " ".join(res["social"]), res["status"],
+         int(res["matches"]), site_phone, site_phone and to_e164(site_phone, split_input(query)[0]), place_id))
+    con.commit()
+    return bool(owner)
+
+
 VERIFIED = "COALESCE(email_status, '') IN ('smtp_ok', 'catch_all', 'mx_ok')"
 GOOD_EMAIL = {"smtp_ok", "catch_all", "mx_ok"}
 COLUMNS = ["Business Name", "Owner Name", "Owner Source", "Address/Location", "Postcode", "City", "Region",
            "Business Sector", "Category", "Phone", "Email", "WhatsApp", "Website", "Total Google Reviews",
-           "Rating", "Short Brief", "Date Added", "Authenticity Verdict"]
+           "Rating", "Short Brief", "Date Added", "Authenticity Verdict", "Social Links", "Sources"]
+OWNER_RANK = ["Website structured data", "Website team page", "Business name", "Website email link",
+              "LinkedIn search result", "Email address (guess)"]
 GENERIC_MAILBOXES = {"info", "contact", "hello", "admin", "office", "sales", "support", "enquiries", "enquiry",
                      "inquiry", "inquiries", "booking", "bookings", "reception", "mail", "team", "help", "care",
                      "appointments", "appointment", "clinic", "marketing", "hr", "jobs", "careers", "accounts",
@@ -222,21 +250,39 @@ def owner_of(e, email):
     return "", "Not found"
 
 
+def lead_owner(e, r):
+    """Best owner name across the website crawl, the business name and the email (see OWNER_RANK)."""
+    found = [owner_of(e, r.get("email")), (r.get("owner_name"), r.get("owner_source"))]
+    return min((o for o in found if o[0] and o[1] in OWNER_RANK), key=lambda o: OWNER_RANK.index(o[1]),
+               default=("", "Not found"))
+
+
+def own_website(r):
+    """The Maps website, unless it is really a Facebook/Instagram/directory page (that goes to Social Links)."""
+    site = r.get("website") or ""
+    return "" if contacts.is_aggregator(site) else site
+
+
 def verdict(e, r):
-    """Authenticity from public signals: claimed listing, reviews, website, verified email, valid phone."""
+    """Authenticity from the share of public signals that apply: claimed listing and reviews (Google leads),
+    website, verified email, valid phone, and the website showing the listing (when it was crawled)."""
     if "closed" in (e.get("status") or "").lower():
         return "Closed"
-    site = re.sub(r"^(https?://)?(www\.)?", "", (r["website"] or "").lower()).split("/")[0]
+    site = re.sub(r"^(https?://)?(www\.)?", "", own_website(r).lower()).split("/")[0]
     signals = {
-        "owner-claimed": bool(e.get("owner")),
-        f"{r['reviews'] or 0} reviews": (r["reviews"] or 0) >= 10,
         "website": bool(site),
         "email on own domain" if site and (r["email"] or "").endswith("@" + site) else "verified email":
             r["email_status"] in GOOD_EMAIL,
         "valid phone": bool(r["phone_e164"] or r["phone"]),
     }
+    if "google_maps" in (r.get("sources") or "google_maps"):
+        signals = {"owner-claimed": bool(e.get("owner")),
+                   f"{r['reviews'] or 0} reviews": (r["reviews"] or 0) >= 10, **signals}
+    if r.get("site_status") == "ok":
+        signals["site matches listing"] = bool(r.get("site_matches"))
     hits = [k for k, ok in signals.items() if ok]
-    label = "Verified" if len(hits) >= 4 else "Likely genuine" if len(hits) >= 2 else "Weak"
+    share = len(hits) / len(signals)
+    label = "Verified" if share >= 2 / 3 else "Likely genuine" if share >= 1 / 3 else "Weak"
     return f"{label} ({', '.join(hits)})" if hits else label
 
 
@@ -250,15 +296,20 @@ def brief(e, r, city):
 
 
 def lead_row(r):
+    r = dict(r)
     e = json.loads(r["raw"] or "{}")
     addr = e.get("complete_address") or {}
     _, sector, searched = split_input(e.get("input_id") or r["query"])
     city = addr.get("city") or searched or addr.get("state") or ""
-    owner, source = owner_of(e, r["email"])
+    owner, source = lead_owner(e, r)
+    website = own_website(r)
+    links = [r["website"] if r["website"] and not website else None,
+             *(r.get("social_links") or "").split(), r.get("linkedin_url")]
     return [r["name"], owner, source, r["address"], addr.get("postal_code") or "", city, addr.get("state") or "",
             sector, r["category"], r["phone"], r["email"] if r["email_status"] in GOOD_EMAIL else "",
-            r["phone_e164"] or "", r["website"], r["reviews"], r["rating"], brief(e, r, city),
-            (r["scraped_at"] or "")[:10], verdict(e, r)]
+            r["phone_e164"] or "", website, r["reviews"], r["rating"], brief(e, r, city),
+            (r["scraped_at"] or "")[:10], verdict(e, r), " ".join(dict.fromkeys(l for l in links if l)),
+            r.get("sources") or "google_maps"]
 
 
 def dedupe_contacts(rows):

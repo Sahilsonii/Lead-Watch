@@ -42,4 +42,55 @@ lead = {"website": "https://smile.ae", "reviews": 120, "email": "hi@smile.ae", "
 assert p.verdict({"owner": {"name": "x"}}, lead).startswith("Verified (owner-claimed, 120 reviews, website, email on own domain")
 assert p.verdict({"status": "Permanently closed"}, lead) == "Closed"
 assert p.verdict({}, {**lead, "website": "", "reviews": 2, "email_status": None}) == "Weak (valid phone)"
+
+# proportional verdict: share of the signals that apply to this lead
+assert p.verdict({"owner": 1}, {**lead, "reviews": 2, "email_status": None}).startswith("Likely genuine")  # 3 of 5
+crawled = {**lead, "reviews": 2, "site_status": "ok", "site_matches": 1}
+assert p.verdict({}, crawled).startswith("Verified"), p.verdict({}, crawled)                               # 4 of 6
+
+# owner priority: website team page > "Dr." in the business name > named email on the website
+dr = {"title": "Dr. Paul's Dental Clinic"}
+assert p.lead_owner(dr, {"email": None, "owner_name": "Lina Haddad", "owner_source": "Website team page"}) \
+    == ("Lina Haddad", "Website team page")
+assert p.lead_owner(dr, {"email": None, "owner_name": "Jane Smith", "owner_source": "Website email link"}) \
+    == ("Dr. Paul", "Business name")
+
+# enrichment storage, export columns and the crawl queue, on a throwaway database
+import asyncio, json, threading
+import enrich
+con = p.db(":memory:")
+for pid, site in (("a", "https://smile.ae"), ("b", "https://www.facebook.com/smile")):
+    con.execute("INSERT INTO leads(place_id, name, website, phone, query, raw) VALUES (?,?,?,?,?,?)",
+                (pid, "Smile Clinic", site, "", "AE|dentist|Dubai", json.dumps({"title": "Smile Clinic"})))
+found = {"status": "ok", "emails": {}, "phones": ["+971501234567"], "social": ["https://instagram.com/smile"],
+         "owner": ("SMILE DENTAL LTD", "Owner", "Website team page"), "matches": True, "pages": 2}
+p.save_enrichment(con, "a", found)
+a = con.execute("SELECT owner_name, phone_e164, social_links, site_status, enriched_at FROM leads WHERE place_id='a'").fetchone()
+assert a[0] is None and a[1] == "+971501234567" and a[2] == "https://instagram.com/smile" and a[3] == "ok" and a[4], a
+
+con.row_factory = p.sqlite3.Row
+row = p.lead_row(con.execute("SELECT * FROM leads WHERE place_id='b'").fetchone())
+assert len(p.COLUMNS) == 20 and len(row) == 20
+assert p.COLUMNS[:18] == ["Business Name", "Owner Name", "Owner Source", "Address/Location", "Postcode", "City", "Region",
+                          "Business Sector", "Category", "Phone", "Email", "WhatsApp", "Website",
+                          "Total Google Reviews", "Rating", "Short Brief", "Date Added", "Authenticity Verdict"]
+cols = dict(zip(p.COLUMNS, row))
+assert cols["Website"] == "" and "https://www.facebook.com/smile" in cols["Social Links"] and cols["Sources"] == "google_maps"
+con.row_factory = None
+
+con.execute("UPDATE leads SET enriched_at = NULL")
+calls = []
+
+
+async def fake_crawl(client, url, business, phone, region, suffixes):
+    calls.append(url)
+    return {**found, "owner": ("Sara Ali", "Founder", "Website structured data"), "phones": []}
+enrich.crawl_site = fake_crawl
+stats = asyncio.run(enrich.enrich_pending(con, 10, threading.Event()))
+assert stats == {"crawled": 2, "names": 2, "blocked": 0}, stats
+assert con.execute("SELECT COUNT(*) FROM leads WHERE enriched_at IS NULL").fetchone()[0] == 0
+assert asyncio.run(enrich.enrich_pending(con, 10, threading.Event()))["crawled"] == 0  # each site crawled once
+stop = threading.Event(); stop.set()
+con.execute("UPDATE leads SET enriched_at = NULL")
+assert asyncio.run(enrich.enrich_pending(con, 10, stop))["crawled"] == 0              # Stop is honored
 print("all checks passed")
