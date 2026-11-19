@@ -112,4 +112,9 @@ assert info["cells_done"] == 3 and info["mode"] == "grid" and 900 < info["area_k
 plain_info = d.run_info({"location": "London", "mode": "plain", "bbox": None, "cell_km": None, "inputs": ["a"]}, "")
 assert plain_info["cells_total"] is None and plain_info["area_km2"] is None
 assert d.run_info(None, "") is None
+
+# live run: gosom -resume writes raw-X.json.resume.json next to the results; it is not a results file
+for name in ("raw-1.json", "raw-2.json", "raw-2.json.resume.json"):
+    (tmp / name).write_text("{}\n")
+assert [f.name for f in d.raw_files()] == ["raw-1.json", "raw-2.json"]
 print("all checks passed")

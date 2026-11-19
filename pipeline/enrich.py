@@ -22,6 +22,7 @@ MAX_BYTES = 1_000_000
 SITES_AT_ONCE = 8
 EXTRA_PAGES = 3
 MAX_RETRY_AFTER_S = 60
+MAX_CRAWL_DELAY_S = 30  # a site asking for longer gets one page (its homepage), so it can't stall the cycle
 READABLE = ("html", "xml", "text/plain")
 LOC_RE = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>", re.I)
 
@@ -135,8 +136,9 @@ async def crawl_site(client, url, business, phone, region, suffixes):
         return result("timeout")
 
     pages = [(final, c.parse_page(html))]
-    links = c.candidate_links(pages[0][1], final)
-    if len(links) < 3:
+    polite = wait <= MAX_CRAWL_DELAY_S
+    links = c.candidate_links(pages[0][1], final) if polite else []
+    if polite and len(links) < 3:
         links += [u for u in await sitemap_links(client, origin, rp, wait) if u not in links]
     status = "ok"
     for link in links[:EXTRA_PAGES]:
@@ -180,7 +182,10 @@ async def enrich_pending(con, limit, stop):
         async with gate:
             if stop.is_set():
                 return
-            res = await crawl_site(client, website, name or "", phone, p.split_input(query)[0], suffixes)
+            try:
+                res = await crawl_site(client, website, name or "", phone, p.split_input(query)[0], suffixes)
+            except Exception:  # one odd page must not stop the other sites or the 24/7 loop; not retried
+                res = result("error")
             stats["names"] += p.save_enrichment(con, place_id, res)
             stats["crawled"] += 1
             stats["blocked"] += res["status"] == "blocked"

@@ -24,6 +24,15 @@ assert c.owner_from_json_ld(c.json_ld(p1), "Smile") == ("Sara Ali", "Founder")
 ceo = '<script type="application/ld+json">[{"@type":"Person","name":"Omar Khan","jobTitle":"Chief Executive Officer (CEO)"}]</script>'
 assert c.owner_from_json_ld(c.json_ld(page("", ceo)), "Smile") == ("Omar Khan", "CEO")
 assert c.owner_from_json_ld([{"@type": "Organization", "founder": "Smile Dental Group"}], "Smile") is None
+# live run: some sites give jobTitle as a list (or junk); that must not crash the crawl
+assert c.owner_from_json_ld([{"@type": "Person", "name": "Omar Khan", "jobTitle": ["Dentist", "Founder"]}], "Smile") \
+    == ("Omar Khan", "Founder")
+assert c.owner_from_json_ld([{"@type": "Person", "name": "Omar Khan", "jobTitle": {"x": 1}}], "Smile") is None
+# live run: greetings, departments and hospital names were taken as owners
+for junk in ("Hi Karen", "Medcare Hospitals", "Special Projects English", "Dear Patient",
+             "General Dentist", "Principal Dentist", "Senior Orthodontist", "Managing Partner"):
+    assert c.clean_person(junk) is None, junk
+assert c.clean_person("Karen Lee") == "Karen Lee"
 
 # owners from team-page text: highest role wins; a tie at the top is ambiguous -> nothing
 assert c.owner_from_text("Dr. Omar Khan, Founder. Lina Haddad, Director.", "Smile") == ("Dr. Omar Khan", "Founder")

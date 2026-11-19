@@ -101,6 +101,12 @@ r, _ = crawl({"https://smile.ae/robots.txt": httpx.Response(200, headers=TEXT, t
               "https://smile.ae/": page('Smile <a href="/about">About</a>'), "https://smile.ae/about": page("Team")})
 assert 7 in waits
 
+# live run: Crawl-delay 600 stalled a whole cycle. Above MAX_CRAWL_DELAY_S read the homepage only, never wait.
+waits.clear()
+r, hits = crawl({"https://smile.ae/robots.txt": httpx.Response(200, headers=TEXT, text="User-agent: *\nCrawl-delay: 600\n"),
+                 "https://smile.ae/": page('Smile Clinic <a href="/about">About</a>'), "https://smile.ae/about": page("Team")})
+assert r["status"] == "ok" and r["pages"] == 1 and "https://smile.ae/about" not in hits and not waits, (r, hits, waits)
+
 # not HTML (PDF) -> nothing read, no crash; huge page is capped at 1 MB
 r, _ = crawl({"https://smile.ae/robots.txt": ROBOTS_OK,
               "https://smile.ae/": httpx.Response(200, headers={"content-type": "application/pdf"}, content=b"%PDF")})

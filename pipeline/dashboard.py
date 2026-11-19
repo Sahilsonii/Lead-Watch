@@ -182,6 +182,11 @@ def run_info(run, log_text):
     return info
 
 
+def raw_files():
+    """Scraper results, oldest first. gosom's -resume sidecar (raw-X.json.resume.json) is not one."""
+    return sorted(f for f in p.DATA.glob("raw-*.json") if not f.name.endswith(".resume.json"))
+
+
 def live_rows(path):
     rows = []
     for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
@@ -212,7 +217,7 @@ def stats():
     con = p.db()
     one = lambda sql: con.execute(sql).fetchone()[0]
     known = {r[0]: r[1:] for r in con.execute("SELECT place_id, email, email_status FROM leads")}
-    raws = sorted(p.DATA.glob("raw-*.json"))
+    raws = raw_files()
     current = live_rows(raws[-1]) if raws else []
     searches_done, searches_total = grid.progress(con)
     log = p.DATA / "scraper.log"
@@ -223,7 +228,7 @@ def stats():
         cc, sector, _ = p.split_input(e.get("input_id"))
         feed.append({
             "name": e.get("title"), "category": e.get("category"), "cc": cc, "sector": sector,
-            "phone": e.get("phone"), "emails": e.get("emails") or [], "link": e.get("link"),
+            "phone": p.pretty_phone(e.get("phone"), cc), "emails": e.get("emails") or [], "link": e.get("link"),
             "rating": e.get("review_rating"), "reviews": e.get("review_count"),
             "mobile": p.to_e164(e.get("phone"), cc),
             "email": email, "email_status": status,

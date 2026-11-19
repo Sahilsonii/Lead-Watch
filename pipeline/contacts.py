@@ -78,7 +78,14 @@ COMPANY_RE = re.compile(r"\b(limited|ltd|llc|inc|incorporated|plc|llp|gmbh|sarl|
                         r"services|solutions|associates|partners|contractors|builders)\b\.?", re.I)
 NOT_NAME_WORDS = {"our", "the", "team", "meet", "about", "contact", "us", "email", "mail", "call", "click", "here",
                   "write", "send", "book", "info", "home", "welcome", "message", "from", "clinic", "dental",
-                  "medical", "center", "centre", "office", "real", "estate", "agency", "director", "founder"}
+                  "medical", "center", "centre", "office", "real", "estate", "agency", "director", "founder",
+                  # seen as false owners in the first live run: greetings, departments, hospital names
+                  "hi", "hello", "hey", "dear", "patient", "patients", "hospital", "hospitals", "clinics", "healthcare",
+                  "pharmacy", "department", "projects", "project", "special", "english", "arabic",
+                  # job titles read as names ("General Dentist", "Managing Partner")
+                  "general", "principal", "senior", "junior", "associate", "consultant", "specialist", "dentist",
+                  "dentists", "orthodontist", "hygienist", "surgeon", "doctor", "manager", "assistant", "managing",
+                  "partner", "owner", "ceo", "co-founder", "broker", "realtor", "agent", "agents"}
 
 
 def looks_like_company(name, business):
@@ -165,8 +172,12 @@ ROLE_ALT = "|".join(p for p, _, _ in ROLE_TABLE)
 
 
 def role_of(title):
+    if isinstance(title, list):  # JSON-LD allows several job titles
+        title = " ".join(t for t in title if isinstance(t, str))
+    if not isinstance(title, str):
+        return None
     for pattern, role, rank in ROLE_TABLE:
-        if re.search(rf"\b(?:{pattern})\b", title or "", re.I):
+        if re.search(rf"\b(?:{pattern})\b", title, re.I):
             return role, rank
     return None
 
