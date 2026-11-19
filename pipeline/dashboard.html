@@ -332,7 +332,7 @@
             <div class="cat">${esc(r.category)} · ${esc(country(r.cc))}</div></td>
         <td><div class="reach">${r.dup ? `<span class="pip">Already saved</span>` : ""}${emailPip(r)}${phonePip(r)}</div></td>
         <td class="m">${r.email ? esc(r.email) : r.emails.length ? esc(r.emails[0]) : '<span class="muted">—</span>'}</td>
-        <td class="m">${esc(r.mobile || r.phone) || '<span class="muted">—</span>'}</td>
+        <td class="m">${esc(r.phone) || '<span class="muted">—</span>'}</td>
         <td class="m">${r.rating ? `${r.rating} <span class="muted">(${fmt(r.reviews)})</span>` : '<span class="muted">—</span>'}</td>
       </tr>`).join("") : `<tr><td colspan="5" class="empty">${d.running ? "Waiting for the first places…" : "Press Start to begin scraping."}</td></tr>`;
     seen = now;

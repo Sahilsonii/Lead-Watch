@@ -7,6 +7,14 @@ assert p.to_e164("+44 7911 123456", None) == "+447911123456"
 assert p.to_e164("04 123 4567", "AE") is None          # Dubai landline
 assert p.to_e164("", "AE") is None and p.to_e164(None, None) is None
 
+# display format: each country's own grouping, with the country code, whatever spacing Google gave
+assert p.pretty_phone("04 566 2262", "AE") == "+971 4 566 2262"
+assert p.pretty_phone("045662262", "AE") == "+971 4 566 2262"
+assert p.pretty_phone("+971501234567", None) == "+971 50 123 4567"
+assert p.pretty_phone("020 7946 0958", "GB") == "+44 20 7946 0958"
+assert p.pretty_phone("+1 416-555-0199", "CA") == "+1 416-555-0199"   # North America's own style
+assert p.pretty_phone("12", "AE") == "12" and p.pretty_phone(None, "AE") == ""  # unparseable: left as it was
+
 # search ids carry country, sector and location; old ids were just the country
 assert p.split_input("AE|real estate agency|Dubai") == ("AE", "real estate agency", "Dubai")
 assert p.split_input("AE") == ("AE", "", "")
@@ -75,6 +83,8 @@ assert p.COLUMNS[:18] == ["Business Name", "Owner Name", "Owner Source", "Addres
                           "Business Sector", "Category", "Phone", "Email", "WhatsApp", "Website",
                           "Total Google Reviews", "Rating", "Short Brief", "Date Added", "Authenticity Verdict"]
 cols = dict(zip(p.COLUMNS, row))
+a_row = dict(zip(p.COLUMNS, p.lead_row(con.execute("SELECT * FROM leads WHERE place_id='a'").fetchone())))
+assert a_row["Phone"] == "+971 50 123 4567" and a_row["WhatsApp"] == "+971 50 123 4567", a_row
 assert cols["Website"] == "" and "https://www.facebook.com/smile" in cols["Social Links"] and cols["Sources"] == "google_maps"
 con.row_factory = None
 
@@ -90,6 +100,20 @@ stats = asyncio.run(enrich.enrich_pending(con, 10, threading.Event()))
 assert stats == {"crawled": 2, "names": 2, "blocked": 0}, stats
 assert con.execute("SELECT COUNT(*) FROM leads WHERE enriched_at IS NULL").fetchone()[0] == 0
 assert asyncio.run(enrich.enrich_pending(con, 10, threading.Event()))["crawled"] == 0  # each site crawled once
+
+# live run: one site that crashes the parser must not stop the others (or the runner thread)
+con.execute("UPDATE leads SET enriched_at = NULL")
+
+
+async def flaky_crawl(client, url, business, phone, region, suffixes):
+    if "facebook" in url:
+        raise TypeError("bad page")
+    return found
+enrich.crawl_site = flaky_crawl
+stats = asyncio.run(enrich.enrich_pending(con, 10, threading.Event()))
+assert stats["crawled"] == 2, stats
+assert con.execute("SELECT site_status FROM leads WHERE place_id='b'").fetchone()[0] == "error"  # not retried forever
+enrich.crawl_site = fake_crawl
 stop = threading.Event(); stop.set()
 con.execute("UPDATE leads SET enriched_at = NULL")
 assert asyncio.run(enrich.enrich_pending(con, 10, stop))["crawled"] == 0              # Stop is honored

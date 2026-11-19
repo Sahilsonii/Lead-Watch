@@ -103,6 +103,18 @@ def to_e164(phone, region):
     return phonenumbers.format_number(p, phonenumbers.PhoneNumberFormat.E164)
 
 
+def pretty_phone(phone, region):
+    """Any phone, mobile or landline, in its country's standard grouping with the country code
+    ('045662262' -> '+971 4 566 2262'). Numbers that don't parse are returned as they were."""
+    try:
+        n = phonenumbers.parse(phone or "", region or None)
+    except phonenumbers.NumberParseException:
+        return (phone or "").strip()
+    if not phonenumbers.is_possible_number(n):
+        return (phone or "").strip()
+    return phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
+
+
 _mx = {}
 
 
@@ -299,15 +311,15 @@ def lead_row(r):
     r = dict(r)
     e = json.loads(r["raw"] or "{}")
     addr = e.get("complete_address") or {}
-    _, sector, searched = split_input(e.get("input_id") or r["query"])
+    cc, sector, searched = split_input(e.get("input_id") or r["query"])
     city = addr.get("city") or searched or addr.get("state") or ""
     owner, source = lead_owner(e, r)
     website = own_website(r)
     links = [r["website"] if r["website"] and not website else None,
              *(r.get("social_links") or "").split(), r.get("linkedin_url")]
     return [r["name"], owner, source, r["address"], addr.get("postal_code") or "", city, addr.get("state") or "",
-            sector, r["category"], r["phone"], r["email"] if r["email_status"] in GOOD_EMAIL else "",
-            r["phone_e164"] or "", website, r["reviews"], r["rating"], brief(e, r, city),
+            sector, r["category"], pretty_phone(r["phone"], cc), r["email"] if r["email_status"] in GOOD_EMAIL else "",
+            pretty_phone(r["phone_e164"], cc), website, r["reviews"], r["rating"], brief(e, r, city),
             (r["scraped_at"] or "")[:10], verdict(e, r), " ".join(dict.fromkeys(l for l in links if l)),
             r.get("sources") or "google_maps"]
 
