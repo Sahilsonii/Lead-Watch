@@ -14,6 +14,7 @@ from pathlib import Path
 
 import phonenumbers
 
+import backoff
 import grid
 import process as p
 
@@ -90,12 +91,13 @@ class Runner:
                                           "resumes": 0})["run"]
             if run:
                 self.scrape_once(run, resume)
-                wait = PAUSE_MIN * 60
+                wait = load_state().get("blocks", {}).get("google", {}).get("pause_min", PAUSE_MIN) * 60
             else:
                 self.phase = "done"  # every sector x location searched; re-check for new targets often
                 wait = 30
             self.stop.wait(wait)
-        self.phase = "stopped"
+        if self.phase != backoff.STOP_MESSAGE:
+            self.phase = "stopped"
 
     def scrape_once(self, run, resume):
         out = p.DATA / run["results"]
@@ -104,12 +106,26 @@ class Runner:
         self.phase = "scraping"
         with open(p.DATA / "scraper.log", "a" if resume else "w") as log:
             code = subprocess.run(docker_args(run, out.name, resume), stdout=log, stderr=subprocess.STDOUT).returncode
-        finished = code == 0 and not self.stop.is_set()
-        if not finished and not self.stop.is_set():  # crashed: resume a couple of times, then start over later
+        stopped = self.stop.is_set()
+        if not out.exists():  # no output at all: the scraper never started (Docker down), not a Google block
+            kind = "error"
+        else:
+            log_text = (p.DATA / "scraper.log").read_text(encoding="utf-8", errors="ignore")
+            kind = backoff.classify_run(code, stopped, len(live_rows(out)), len(run["inputs"]), log_text)
+        finished = kind == "ok" and code == 0 and not stopped
+        if kind == "error":  # crashed: resume a couple of times, then start over later
             run = {**run, "resumes": run["resumes"] + 1}
-        save_state(run=None if finished or run["resumes"] > MAX_RESUMES else run)
+        save_state(run=None if finished or run["resumes"] > MAX_RESUMES else run)  # blocked: resume after the pause
+        if not stopped:
+            block = backoff.after_run(load_state().get("blocks", {}).get("google", {}), kind, PAUSE_MIN)
+            save_state(blocks={**load_state().get("blocks", {}), "google": block},
+                       next_attempt=time.strftime("%Y-%m-%dT%H:%M", time.localtime(time.time() + block["pause_min"] * 60)))
+            if block["stopped"]:
+                save_state(running=False)
+                self.stop.set()
+        auto_stopped = not stopped and self.stop.is_set()
         if not out.exists():
-            self.phase = f"scraper failed (exit {code}), see data/scraper.log"
+            self.phase = backoff.STOP_MESSAGE if auto_stopped else f"scraper failed (exit {code}), see data/scraper.log"
             return
         self.phase = "verifying emails"
         # Stopped or crashed mid-run: keep what was found, but leave the searches queued.
@@ -117,8 +133,8 @@ class Runner:
         p.export()
         state = load_state()
         save_state(dups_total=state.get("dups_total", 0) + dup,
-                   last_run={"file": out.name, "new": new, "dups": dup, "at": time.strftime("%H:%M")})
-        self.phase = "resting"
+                   last_run={"file": out.name, "new": new, "dups": dup, "at": time.strftime("%H:%M"), "class": kind})
+        self.phase = backoff.STOP_MESSAGE if auto_stopped else "resting"
 
 
 runner = Runner()

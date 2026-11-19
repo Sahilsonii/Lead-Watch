@@ -38,10 +38,10 @@ class Proc:
         self.returncode = code
 
 
-def fake_run(code):
+def fake_run(code, places=1):
     def run(args, **kw):
         launched.append(args)
-        (tmp / "raw-1.json").write_text("")
+        (tmp / "raw-1.json").write_text('{"title": "x"}\n' * places)
         return Proc(code)
     return run
 
@@ -64,9 +64,27 @@ for i in range(d.MAX_RESUMES + 1):
     assert ingested[-1] == []  # nothing marked done on a crash
 assert d.load_state()["run"] is None  # dropped after the third crash; its searches stay queued
 
-d.save_state(run=saved)
+d.save_state(run=saved, blocks={"google": {"score": 2, "pause_min": 120, "stopped": False, "kind": "blocked"}})
+before = d.load_state()["blocks"]
 r = d.Runner()
 r.stop.set()  # Stop pressed: docker exits non-zero, run is kept unchanged for the next Start
 r.scrape_once(saved, resume=False)
 assert d.load_state()["run"] == saved
+assert d.load_state()["blocks"] == before  # a manual Stop never moves the block score
+d.save_state(blocks={})
+
+# blocked (clean exit, zero places): nothing marked done, run kept for resume, pause doubled
+r = d.Runner()
+d.subprocess.run = fake_run(0, places=0)
+r.scrape_once(saved, resume=False)
+st = d.load_state()
+assert ingested[-1] == [] and st["run"] == saved
+assert st["blocks"]["google"] == {"score": 1, "pause_min": 2 * d.PAUSE_MIN, "stopped": False, "kind": "blocked"}
+assert st["next_attempt"]
+
+# fourth block in a row: the loop stops itself and says why
+d.save_state(blocks={"google": {"score": 3, "pause_min": 240, "stopped": False, "kind": "blocked"}}, running=True)
+r = d.Runner()
+r.scrape_once(saved, resume=False)
+assert r.stop.is_set() and r.phase == d.backoff.STOP_MESSAGE and d.load_state()["running"] is False
 print("all checks passed")
