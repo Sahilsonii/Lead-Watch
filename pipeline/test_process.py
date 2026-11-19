@@ -15,6 +15,8 @@ assert p.split_input("AE") == ("AE", "", "")
 assert p.verify_email("logo@2x.png") == "invalid"
 assert p.verify_email("john@example.com") == "invalid"
 assert p.verify_email("not-an-email") == "invalid"
+assert p.mx_host("w3.org")                                     # a real mail domain...
+assert p.verify_email("team@w3.org") == "invalid"              # ...but w3.org addresses come from site code
 assert p.verify_email("info@gmail.com") == "mx_ok"     # real MX lookup (needs internet)
 assert p.verify_email("x@no-such-domain-zz9q.com") == "invalid"
 

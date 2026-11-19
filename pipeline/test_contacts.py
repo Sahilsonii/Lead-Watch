@@ -1,0 +1,74 @@
+"""Self-check for website contact extraction. Run: python pipeline/test_contacts.py"""
+import contacts as c
+
+
+def page(body, head=""):
+    return c.parse_page(f"<html><head>{head}</head><body>{body}</body></html>")
+
+
+# emails, with the person's name when the page attaches one
+assert c.emails_in(page('<a href="mailto:jane@smile.ae">Jane Smith</a>')) == {"jane@smile.ae": "Jane Smith"}
+assert c.emails_in(page("Write to Jane Smith &lt;jane@smile.ae&gt; today")) == {"jane@smile.ae": "Jane Smith"}
+assert c.emails_in(page("jane [at] smile [dot] ae")) == {"jane@smile.ae": None}
+assert c.emails_in(page("jane (at) smile.ae")) == {"jane@smile.ae": None}
+assert c.emails_in(page("meet us at clinic dot com")) == {}                      # plain words are not an email
+assert c.emails_in(page('<a href="mailto:info@smile.ae">SMILE DENTAL LTD</a>')) == {"info@smile.ae": None}
+assert c.emails_in(page('<a href="mailto:info@smile.ae">Email us</a>')) == {"info@smile.ae": None}
+assert c.emails_in(page('<a href="mailto:Info@Smile.ae?subject=Hi">info@smile.ae</a>')) == {"info@smile.ae": None}
+
+# owners from structured data
+ld = '<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Dentist","name":"Smile","founder":{"@type":"Person","name":"Sara Ali"}}]}</script>'
+bad = '<script type="application/ld+json">{not json</script>'
+p1 = page("", ld + bad)
+assert c.owner_from_json_ld(c.json_ld(p1), "Smile") == ("Sara Ali", "Founder")
+ceo = '<script type="application/ld+json">[{"@type":"Person","name":"Omar Khan","jobTitle":"Chief Executive Officer (CEO)"}]</script>'
+assert c.owner_from_json_ld(c.json_ld(page("", ceo)), "Smile") == ("Omar Khan", "CEO")
+assert c.owner_from_json_ld([{"@type": "Organization", "founder": "Smile Dental Group"}], "Smile") is None
+
+# owners from team-page text: highest role wins; a tie at the top is ambiguous -> nothing
+assert c.owner_from_text("Dr. Omar Khan, Founder. Lina Haddad, Director.", "Smile") == ("Dr. Omar Khan", "Founder")
+assert c.owner_from_text("Managing Director: Priya Nair", "Smile") == ("Priya Nair", "Managing Director")
+assert c.owner_from_text("John Doe, Director. Mary Roe, Director.", "Smile") is None
+assert c.owner_from_text("Meet Our Team, Director of nothing", "Smile") is None
+assert c.owner_from_text("مدير العيادة: سارة علي", "عيادة") is None                   # non-Latin text: no crash
+
+# company-looking names are never owners
+assert c.looks_like_company("Smile Dental Group", "x")
+assert c.looks_like_company("ABC TRADING", "x")
+assert c.looks_like_company("عيادة الابتسامة", "عيادة  الابتسامة")
+assert not c.looks_like_company("Sara Ali", "Smile Clinic")
+
+# which pages to read next
+home = page('<a href="/contact-us">Contact</a><a href="/about">About us</a><a href="/blog/post-1">News</a>'
+            '<a href="https://other.com/contact">Partner</a><a href="mailto:x@y.z">Mail</a>'
+            '<a href="team.html">Our team</a><a href="tel:+97145662262">Call</a>',
+            '<base href="https://smile.ae/en/">')
+assert set(c.candidate_links(home, "https://www.smile.ae/")) == {
+    "https://smile.ae/contact-us", "https://smile.ae/about", "https://smile.ae/en/team.html"}
+
+# social links and sites that aren't the business's own
+assert c.social_links(page('<a href="https://instagram.com/smile">IG</a><a href="/x">x</a>'), "https://smile.ae") == ["https://instagram.com/smile"]
+assert c.is_aggregator("https://m.facebook.com/smile")
+assert c.is_aggregator("https://www.google.ae/maps/place/x")
+assert not c.is_aggregator("https://smile.ae")
+assert c.is_blocked_domain("https://dha.gov.ae", [".gov.ae"])
+assert c.is_blocked_domain("https://www.nhs.uk", [".nhs.uk"])
+assert not c.is_blocked_domain("https://smile.ae", c.load_blocked_domains())
+assert ".gov.uk" in c.load_blocked_domains()
+
+# authenticity: the site shows the listing's phone or name
+assert c.site_matches_listing("Call 04 566 2262", "+971 4 566 2262", "x")
+assert c.site_matches_listing("Welcome to  SMILE clinic", None, "Smile Clinic")
+assert not c.site_matches_listing("Hello", "+971 4 566 2262", "Smile Clinic")
+
+# challenge pages are skipped, never mined; a normal page with a Turnstile form is not a block
+assert c.is_block_page(403, "<html>...captcha-delivery.com...</html>")
+assert c.is_block_page(200, "<html><body><div id='cf-chl-widget'></div></body></html>")
+assert not c.is_block_page(200, "<html><body>" + "real text " * 20 + "</body></html>")
+assert not c.is_block_page(200, "<html><body>" + "contact us " * 20 +
+                           "<script src='https://challenges.cloudflare.com/turnstile/v0/api.js'></script></body></html>")
+assert c.is_block_page(503, "<html><body>Checking your browser <script src='https://challenges.cloudflare.com/x'></script></body></html>")
+
+assert c.phones_in(page('<a href="tel:+97145662262">Call</a>'), "AE") == ["+97145662262"]
+assert c.phones_in(page("Mobile: 050 123 4567"), "AE") == ["+971501234567"]
+print("all checks passed")

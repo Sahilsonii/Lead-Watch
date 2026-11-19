@@ -25,7 +25,9 @@ DATA = ROOT / "data"
 SMTP_CHECK = os.environ.get("SMTP_CHECK") == "1"  # needs outbound port 25, which most clouds block
 EMAIL_RE = re.compile(r"^[\w.+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$")
 # Website crawls pick up image names ("logo@2x.png") and theme placeholders; drop them.
-JUNK_RE = re.compile(r"\.(png|jpe?g|gif|webp|svg)$|@(example|domain|email|yourdomain|sentry|wixpress)\.", re.I)
+# Hosts like sentry/wixpress/cloudfront/w3 show up in site code, never as a person's mailbox (list from EraSDR).
+JUNK_RE = re.compile(r"\.(png|jpe?g|gif|webp|svg)$|@(example|domain|email|yourdomain)\."
+                     r"|@([\w-]+\.)*(sentry|wixpress|googleapis|gstatic|cloudfront|schema|w3)\.", re.I)
 WHATSAPP_TYPES = {T.MOBILE, T.FIXED_LINE_OR_MOBILE}
 
 
