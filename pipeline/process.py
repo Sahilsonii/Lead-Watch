@@ -72,7 +72,6 @@ def db(path=None):
         "linkedin_checked_at": "TEXT", "sources": "TEXT DEFAULT 'google_maps'",
         "lat": "REAL", "lon": "REAL", "phone_any": "TEXT", "domain": "TEXT",  # cross-source match keys
         "xlsx_batch": "TEXT",  # the run whose block in leads.xlsx holds this lead
-        "gsheet_at": "TEXT",  # when this lead was sent to the Google Sheet (gsheet.py)
         "ch_checked_at": "TEXT", "ch_company": "TEXT"})  # Companies House lookup (UK leads), its company number
     if "lat" in added:  # leads from before matching: fill their keys from the stored Google data, once
         for place_id, phone, website, query, raw in con.execute(
@@ -520,14 +519,13 @@ def exportable(con):
         ORDER BY ({VERIFIED}) + (phone_e164 IS NOT NULL) DESC, reviews DESC""").fetchall())
 
 
-def not_in_sheet(con, mark="xlsx_batch"):
-    """Exportable leads not yet in the sheet whose marker column is `mark` (leads.xlsx, or gsheet_at for the
-    Google Sheet). Leads already there go first in the dedupe, so a new listing of a contact the sheet already
-    has is never added again."""
+def not_in_sheet(con):
+    """Exportable leads not yet in leads.xlsx. Leads already there go first in the dedupe, so a new listing of a
+    contact the sheet already has is never added again."""
     con.row_factory = sqlite3.Row
     rows = con.execute(f"SELECT * FROM leads "
-                       f"ORDER BY {mark} IS NULL, ({VERIFIED}) + (phone_e164 IS NOT NULL) DESC, reviews DESC").fetchall()
-    return [r for r in dedupe_contacts(rows) if r[mark] is None]
+                       f"ORDER BY xlsx_batch IS NULL, ({VERIFIED}) + (phone_e164 IS NOT NULL) DESC, reviews DESC").fetchall()
+    return [r for r in dedupe_contacts(rows) if r["xlsx_batch"] is None]
 
 
 def export(batch=None, limit=None):
@@ -540,10 +538,6 @@ def export(batch=None, limit=None):
         w.writerow(COLUMNS)
         w.writerows(lead_row(r) for r in exportable(con))
     (DATA / "ATTRIBUTION.txt").write_text(ATTRIBUTION, encoding="utf-8")  # travels with leads.csv
-    import gsheet  # here, not at the top: gsheet imports this module
-    sent, why = gsheet.sync(con)
-    if why != "not set up":
-        print(why)
     batch = batch or time.strftime("%Y-%m-%d %H:%M")
     new = not_in_sheet(con)[:limit]
     sheet = DATA / "leads.xlsx"

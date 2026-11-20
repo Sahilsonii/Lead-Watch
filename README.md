@@ -186,8 +186,6 @@ Set these as environment variables before starting the dashboard.
 | `BRAVE_API_KEY` | (none) | Turns on LinkedIn name lookups (Brave asks for a card) |
 | `BRAVE_MONTHLY_CAP` | 1000 | Hard cap on Brave searches per month |
 | `SMTP_CHECK` | off | `1` adds an SMTP mailbox check |
-| `GOOGLE_SHEETS_KEY` | (none) | Service account key (the JSON text) for the [Google Sheet](#-google-sheet-optional) |
-| `GOOGLE_SHEET_ID` | (none) | The Google Sheet new leads are sent to |
 
 `blocked_domains.txt` lists website domains that are never read (government and health-service sites by default: `.gov`, `.gov.uk`, `.nhs.uk`, …). Add one suffix per line.
 
@@ -275,33 +273,6 @@ To turn it on:
 - [ ] Set the key in your environment, never in a file: `$env:BRAVE_API_KEY = "..."`, then start the dashboard.
 
 Lead Watch also stops at `BRAVE_MONTHLY_CAP`, on Brave's "limit reached" responses, and when Brave rejects the key.
-
-</details>
-
-### 📗 Google Sheet (optional)
-
-<details>
-<summary><b>How it works and how to turn it on</b></summary>
-
-After each export, Lead Watch adds the new leads to a Google Sheet you choose, so a team can work from one shared list. The sheet gets the same 21 columns as `leads.csv`, one row per contact, and each lead is sent once. Rows are only ever added, so notes and colors you put in the sheet stay. If Google is unreachable, the leads go on the next export. Free: a Google Cloud project for this needs no card.
-
-To turn it on (about 10 minutes, once):
-
-- [ ] Open https://console.cloud.google.com/, create a project (any name, such as "Lead Watch"). Skip any offer of a free trial: it is not needed.
-- [ ] In that project, open **APIs & Services → Library**, search **Google Sheets API**, and press **Enable**.
-- [ ] Open **IAM & Admin → Service Accounts → Create service account**. Name it `lead-watch`, press **Done** (no roles needed).
-- [ ] Open the new account, go to **Keys → Add key → Create new key → JSON**. A `.json` file downloads. It is a password: never put it in this folder or send it to anyone.
-- [ ] Create a blank Google Sheet. Press **Share** and add the service account's email (it ends in `iam.gserviceaccount.com`, shown on its page) as **Editor**.
-- [ ] Save both as user environment variables, then delete the downloaded file:
-
-```powershell
-[Environment]::SetEnvironmentVariable("GOOGLE_SHEETS_KEY", (Get-Content "$HOME\Downloads\<the-key-file>.json" -Raw), "User")
-[Environment]::SetEnvironmentVariable("GOOGLE_SHEET_ID", "<the id between /d/ and /edit in the sheet's link>", "User")
-```
-
-- [ ] Restart the dashboard. The first export sends every lead so far (about 5,000 rows a request, so 88,000 leads take under a minute).
-
-A Google Sheet holds 10 million cells, about 470,000 leads; past that, point `GOOGLE_SHEET_ID` at a new sheet. If the sync fails, the dashboard's console says why, for example which email to share the sheet with. Work accounts sometimes block key downloads; use a personal Google account then.
 
 </details>
 
