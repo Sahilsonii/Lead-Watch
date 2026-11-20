@@ -82,7 +82,7 @@ def docker_args(run, results, resume):
             "-depth", str(run.get("depth", DEPTH)), "-c", str(run.get("concurrency", CONCURRENCY)),
             "-exit-on-inactivity", "3m"]
     if run["mode"] == "grid":
-        args += ["-grid-bbox", run["bbox"], "-grid-cell", str(run["cell_km"]), "-grid-strict", "-zoom", str(ZOOM)]
+        args += ["-grid-bbox", run["bbox"], "-grid-cell", str(run["cell_km"]), "-zoom", str(ZOOM)]
     return args + ["-resume"] if resume else args
 
 

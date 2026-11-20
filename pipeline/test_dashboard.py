@@ -7,8 +7,9 @@ plain_run = {"mode": "plain", "bbox": None, "cell_km": None,
              "inputs": ["dentist in London #!#GB|dentist|London"], "keys": ["dentist in London"]}
 
 args = d.docker_args(grid_run, "raw-1.json", resume=False)
-for flag in ["-grid-bbox", "25.0,55.0,25.3,55.3", "-grid-cell", "4.0", "-grid-strict", "-zoom", "-depth", "10"]:
+for flag in ["-grid-bbox", "25.0,55.0,25.3,55.3", "-grid-cell", "4.0", "-zoom", "-depth", "10"]:
     assert flag in args, flag
+assert "-grid-strict" not in args  # places just outside a village box are kept; ingest keeps the country instead
 assert args[args.index("-depth") + 1] == "10" and "-resume" not in args
 assert "/out/raw-1.json" in args and "/out/batch.txt" in args
 

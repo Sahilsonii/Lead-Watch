@@ -328,8 +328,9 @@ def ingest(path, done_keys=()):
     new = dup = 0
     for e in read_entries(path):
         key = e.get("place_id") or e.get("data_id") or e.get("link")
-        if not key:
-            continue
+        country = ((e.get("complete_address") or {}).get("country") or "").upper()
+        if not key or country and country != split_input(e.get("input_id"))[0]:
+            continue  # Google can answer a UK search with places abroad: only the searched country is kept
         k = match_keys(e)
         if con.execute("SELECT 1 FROM leads WHERE place_id = ?", (key,)).fetchone():
             dup += 1

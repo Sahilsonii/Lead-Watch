@@ -38,6 +38,11 @@ def lead(place_id):
 
 count = lambda: con.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
 
+# country only: Google answers a UK search with Indian places when it ignores the map; those never become leads
+pune = {**google("g-pune", "Pune Carpenter"), "complete_address": {"country": "IN"}}
+assert load(pune, google("g-ok", "Dubai Dental")) == (1, 0) and lead("g-pune") is None and lead("g-ok")
+con.execute("DELETE FROM leads WHERE place_id = 'g-ok'"); con.commit()
+
 # keys: any valid phone (landlines too, not only mobiles) and the website's own domain
 assert p.phone_key("04 566 2262", "AE") == "+97145662262" and p.phone_key("12", "AE") is None
 assert p.site_domain("https://www.Smile.ae/contact") == "smile.ae" and p.site_domain("smile.ae") == "smile.ae"
