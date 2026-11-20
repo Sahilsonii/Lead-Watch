@@ -151,6 +151,16 @@ for name in ("raw-1.json", "raw-2.json", "raw-2.json.resume.json"):
     (tmp / name).write_text("{}\n")
 assert [f.name for f in d.raw_files()] == ["raw-1.json", "raw-2.json"]
 
+# the page's status comes from a copy kept fresh in the background; a failed refresh keeps the last good one
+real_stats = d.stats
+d.stats = lambda: {"leads": 7}
+d.refresh_status()
+assert d.LATEST["body"] == b'{"leads": 7}'
+d.stats = lambda: 1 / 0
+d.refresh_status()
+assert d.LATEST["body"] == b'{"leads": 7}' and "ZeroDivisionError" in (tmp / "runner.log").read_text()
+d.stats = real_stats
+
 # Clear: the feed hides the places already in it; later places show, and the next run's file shows in full
 (tmp / "raw-2.json").write_text('{"title": "a"}\n{"title": "b"}\n')
 d.clear_feed()

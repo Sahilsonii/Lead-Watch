@@ -351,6 +351,25 @@ def stats():
     }
 
 
+LATEST = {"body": b""}  # the page's status, recomputed in the background
+
+
+def refresh_status():
+    """Recompute the page's status. Requests return the latest copy, so a busy loop (an export of 80,000 leads,
+    a country-wide load) never makes the page wait or pile up requests. A failure keeps the last good copy."""
+    try:
+        LATEST["body"] = json.dumps(stats()).encode()
+    except Exception:
+        with open(p.DATA / "runner.log", "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} status\n{traceback.format_exc()}\n")
+
+
+def refresh_forever(every=2):
+    while True:
+        refresh_status()
+        time.sleep(every)
+
+
 class Handler(BaseHTTPRequestHandler):
     def send(self, body, ctype="application/json", code=200):
         self.send_response(code)
@@ -361,7 +380,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/api":
-            self.send(json.dumps(stats()).encode())
+            self.send(LATEST["body"] or json.dumps(stats()).encode())
         elif self.path.startswith("/api/country?cc="):  # size of an "All of <country>" job
             cc = self.path.split("=", 1)[1].upper()
             if cc not in phonenumbers.SUPPORTED_REGIONS:
@@ -402,5 +421,7 @@ if __name__ == "__main__":
     p.db().close()  # add any new columns now, before the loop and the page poll both open the database
     if load_state().get("running"):
         runner.start()  # resume after a reboot or crash
+    refresh_status()
+    threading.Thread(target=refresh_forever, daemon=True).start()
     print(f"Lead Watch on http://localhost:{PORT}")
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()  # localhost only: lead data is private

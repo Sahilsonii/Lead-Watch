@@ -57,6 +57,7 @@ Kept up to date after every step, so the work can continue from any account or s
 
 ### Fixed
 
+- The dashboard froze and Start stopped working at 88,000 leads. Two causes, measured on a copy: adding a run's leads to `leads.xlsx` reopened and resaved the whole workbook (over 10 minutes for 80,000 rows), and every 3-second page poll recomputed all counts, including one database query per town (13,600 for five countries), so polls piled up while the loop held Python busy. Now the sheet is rebuilt from the database in one streaming pass (30 s for 80,000 rows; a deleted sheet comes back whole), the counts use one query for all towns, and the page gets a status copy refreshed every 2 s in the background. Measured during a full export: page requests 0.07 s typical, 0.15 s at worst (was 15 s, then no answer).
 - "Dashboard server not reachable" during a whole-country run: one country-wide Foursquare load held the database's write lock for minutes, and every page poll failed with "database is locked". The database now runs in WAL mode, so the page reads the last saved data while the loop writes.
 - The export kept only leads with a verified email or a mobile, so most open-data places (about 600 of the first 927 Foursquare leads) never reached the sheet. Sahil: "every lead from every source in one Excel file". Every lead is now exported, best first, one row per business.
 - "Stop after 5" while `leads.xlsx` was open in Excel said "Stopped after 0 new leads". It now says the sheet is open in Excel and that the new leads are kept for the next Start.

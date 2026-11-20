@@ -96,9 +96,8 @@ from pathlib import Path
 p.DATA = Path(tempfile.mkdtemp())  # never the real data/ folder
 xlsx = p.DATA / "check.xlsx"
 blank = [""] * (len(p.COLUMNS) - 2)
-assert p.append_xlsx(xlsx, "2026-11-20 04:05", [["=HYPERLINK(\"http://x\")", 4.5] + blank])
-assert p.append_xlsx(xlsx, None, [["Second", 1] + blank])  # same run: its block goes on
-assert p.append_xlsx(xlsx, "2026-11-20 09:00", [["Third", 2] + blank])
+assert p.write_xlsx(xlsx, [("2026-11-20 04:05", [["=HYPERLINK(\"http://x\")", 4.5] + blank, ["Second", 1] + blank]),
+                           ("2026-11-20 09:00", [["Third", 2] + blank])])
 sheet = openpyxl.load_workbook(xlsx).active
 assert [c.value for c in sheet[1]] == p.COLUMNS and sheet.freeze_panes == "A2"
 assert [sheet.cell(r, 1).value for r in range(2, 10)] ==     ["2026-11-20 04:05", None, '=HYPERLINK("http://x")', "Second", None, "2026-11-20 09:00", None, "Third"]
@@ -119,6 +118,11 @@ assert p.export("2026-11-20 11:00") == 0  # nothing new: no empty block for this
 sheet = openpyxl.load_workbook(p.DATA / "leads.xlsx").active
 assert [sheet.cell(r, 1).value for r in range(2, 4)] == ["2026-11-20 10:00", None]
 assert sheet.max_row == 3 + waiting and "2026-11-20 11:00" not in [c.value for c in sheet["A"]]
+# a deleted sheet comes back whole on the next export, every block in it
+(p.DATA / "leads.xlsx").unlink()
+assert p.export("2026-11-20 12:00") == 0
+again = openpyxl.load_workbook(p.DATA / "leads.xlsx").active
+assert again.max_row == sheet.max_row and again["A2"].value == "2026-11-20 10:00"
 assert a_row["Phone"] == "+971 50 123 4567" and a_row["WhatsApp"] == "+971 50 123 4567", a_row
 assert cols["Website"] == "" and "https://www.facebook.com/smile" in cols["Social Links"] and cols["Sources"] == "google_maps"
 con.row_factory = None

@@ -23,6 +23,7 @@ import dns.resolver
 import openpyxl
 import phonenumbers
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Font
 from phonenumbers import PhoneNumberType as T
 
@@ -528,42 +529,51 @@ def export(batch=None, limit=None):
     (DATA / "ATTRIBUTION.txt").write_text(ATTRIBUTION, encoding="utf-8")  # travels with leads.csv
     batch = batch or time.strftime("%Y-%m-%d %H:%M")
     new = not_in_sheet(con)[:limit]
-    started = con.execute("SELECT 1 FROM leads WHERE xlsx_batch = ? LIMIT 1", (batch,)).fetchone()
-    if not new or not append_xlsx(DATA / "leads.xlsx", None if started else batch, [lead_row(r) for r in new]):
-        return 0
+    sheet = DATA / "leads.xlsx"
+    if (not new and sheet.exists()) or not write_xlsx(sheet, sheet_blocks(con, batch, new)):
+        return 0  # nothing new (a deleted sheet is rebuilt), or the sheet is open in Excel
     con.executemany("UPDATE leads SET xlsx_batch = ? WHERE place_id = ?", [(batch, r["place_id"]) for r in new])
     con.commit()
     return len(new)
 
 
-def append_xlsx(path, heading, rows):
-    """Add rows to the Excel history: a bold column header once, then for each run its date and time, a blank row,
-    and its leads. heading None continues the current run's block. False when Excel has the file open (Windows
-    locks it): nothing is marked as written, so the next export adds these rows."""
-    if path.exists():
-        wb = openpyxl.load_workbook(path)
-        ws = wb.active
-    else:
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Leads"
-        ws.append(COLUMNS)
-        for i, name in enumerate(COLUMNS, 1):
-            ws.cell(1, i).font = Font(bold=True)
-            ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = 14 if len(name) < 12 else 22
-        ws.freeze_panes = "A2"
-    if heading:
-        if ws.max_row > 1:
+def write_xlsx(path, blocks):
+    """Write the Excel history in one streaming pass: a bold column header, then per Start its date and time,
+    a blank row and its leads, a blank row between Starts. blocks: [(heading, rows)]. False when Excel has the
+    file open (Windows locks it): the caller marks nothing, so the next export writes these rows."""
+    # shortcut: rebuilt from the database on every export (82k leads: about 20 s, streaming); past ~500k leads,
+    # write one file per run instead
+    wb = openpyxl.Workbook(write_only=True)
+    ws = wb.create_sheet("Leads")
+    for i, name in enumerate(COLUMNS, 1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = 14 if len(name) < 12 else 22
+    ws.freeze_panes = "A2"
+
+    def cell(v, bold=False):
+        if isinstance(v, str):
+            v = ILLEGAL_CHARACTERS_RE.sub("", v)
+        if not bold and not (isinstance(v, str) and v.startswith("=")):
+            return v
+        c = WriteOnlyCell(ws, value=v)
+        if isinstance(v, str):
+            c.data_type = "s"  # web text starting with "=" stays text, never a live formula
+        if bold:
+            c.font = Font(bold=True)
+        return c
+
+    ws.append([cell(n, bold=True) for n in COLUMNS])
+    n = 1
+    for i, (heading, rows) in enumerate(blocks):
+        if i:
             ws.append([None])  # a gap before the next run
-        ws.append([heading])
-        ws.cell(ws.max_row, 1).font = Font(bold=True)
+            n += 1
+        ws.append([cell(heading, bold=True)])
         ws.append([None])
-    for r in rows:
-        ws.append([ILLEGAL_CHARACTERS_RE.sub("", v) if isinstance(v, str) else v for v in r])
-        for c in ws[ws.max_row]:
-            if isinstance(c.value, str):
-                c.data_type = "s"  # web text starting with "=" stays text, never a live formula
-    ws.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(COLUMNS))}{ws.max_row}"
+        n += 2
+        for r in rows:
+            ws.append([cell(v) for v in r])
+            n += 1
+    ws.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(COLUMNS))}{n}"
     part = path.with_suffix(".part")
     wb.save(part)
     try:
@@ -572,6 +582,17 @@ def append_xlsx(path, heading, rows):
         part.unlink(missing_ok=True)
         return False
     return True
+
+
+def sheet_blocks(con, batch, new):
+    """[(heading, rows)]: every Start's leads so far, oldest first, with this run's new leads added to its block."""
+    con.row_factory = sqlite3.Row
+    blocks = {}
+    for r in con.execute(f"SELECT * FROM leads WHERE xlsx_batch IS NOT NULL ORDER BY xlsx_batch, "
+                         f"({VERIFIED}) + (phone_e164 IS NOT NULL) DESC, reviews DESC"):
+        blocks.setdefault(r["xlsx_batch"], []).append(r)
+    blocks.setdefault(batch, []).extend(new)
+    return [(heading, [lead_row(r) for r in rows]) for heading, rows in blocks.items() if rows]
 
 
 ATTRIBUTION = """Data sources for leads.csv (see its Sources column)

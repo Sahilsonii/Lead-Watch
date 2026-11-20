@@ -135,8 +135,9 @@ def progress(con, load=geo.towns):
     except OSError:  # GeoNames not downloaded yet and no network: count what is known
         locs = expand([l for l in locations if l[0] != ALL], load)
     flags = []
-    for loc, cc, town in locs:
-        row = cached_location(con, loc, cc)
+    cached = {(n, c): (b, a) for n, c, b, a in con.execute("SELECT name, cc, bbox, area_km2 FROM locations")}
+    for loc, cc, town in locs:  # one query, not one per town: a page poll covered 13,600 towns
+        row = cached.get((loc, cc))
         grid_mode = bool(town and town["bbox"]) or bool(row and row[0] and row[1] <= MAX_GRID_AREA_KM2)
         flags += [(f"grid:{s}|{loc}" if grid_mode else plain_key(s, loc)) in done for s in sectors]
     return sum(flags), len(flags)
