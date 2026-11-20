@@ -89,8 +89,8 @@ def docker_args(run, results, resume):
 def reap_hung(log_path, start, done, reaped):
     """gosom can print "scrapemate exited" and then hang with its browsers open: stop the container a minute later."""
     while not done.wait(REAP_S):
-        if b"scrapemate exited" in log_path.read_bytes()[start:]:
-            if not done.wait(2 * REAP_S):
+        if b'"message":"scrapemate exited"' in log_path.read_bytes()[start:]:  # gosom's own record, not page text
+            if not done.wait(2 * REAP_S) and not done.is_set():
                 reaped.append(True)
                 subprocess.run(["docker", "stop", "-t", "5", CONTAINER], capture_output=True)
             return
@@ -195,10 +195,12 @@ class Runner:
         start = log_path.stat().st_size if resume and log_path.exists() else 0
         subprocess.run(["docker", "rm", "-f", CONTAINER], capture_output=True)  # a container left by a crash blocks the name
         done, reaped = threading.Event(), []
-        with open(log_path, "a" if resume else "w") as log:
-            threading.Thread(target=reap_hung, args=(log_path, start, done, reaped), daemon=True).start()
-            code = subprocess.run(docker_args(run, out.name, resume), stdout=log, stderr=subprocess.STDOUT).returncode
-        done.set()
+        try:
+            with open(log_path, "a" if resume else "w") as log:
+                threading.Thread(target=reap_hung, args=(log_path, start, done, reaped), daemon=True).start()
+                code = subprocess.run(docker_args(run, out.name, resume), stdout=log, stderr=subprocess.STDOUT).returncode
+        finally:
+            done.set()  # a launch that throws must not leave a watchdog to stop the next run's container
         code = 0 if reaped else code  # gosom had finished; only its shutdown hung
         stopped = self.stop.is_set()
         if not out.exists():  # no output at all: the scraper never started (Docker down), not a Google block
