@@ -149,6 +149,8 @@ class Runner:
                     self.phase = "done"  # every sector x location searched; re-check for new targets often
                     wait = 30
                 self.enrich_cycle(scraped=bool(run))  # runs even when Google is blocking: other hosts
+                self.rest(wait)
+                continue
             except Exception:  # leads.csv open in Excel, a truncated file, a locked DB: log it, rest, go on
                 with open(p.DATA / "runner.log", "a", encoding="utf-8") as f:
                     f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\n{traceback.format_exc()}\n")
@@ -157,6 +159,21 @@ class Runner:
             self.stop.wait(wait)
         if self.phase != backoff.STOP_MESSAGE and not self.phase.startswith("Stopped"):
             self.phase = "stopped"
+
+    def rest(self, seconds):
+        """Google's pause. Websites are other hosts, so keep reading them meanwhile, then export once."""
+        end, read, after = time.monotonic() + seconds, 0, self.phase
+        while not self.stop.is_set() and time.monotonic() < end:
+            self.phase = "reading websites while Google rests"
+            crawled = asyncio.run(enrich.enrich_pending(p.db(), ENRICH_PER_CYCLE, self.stop)).get("crawled")
+            read += crawled or 0
+            if not crawled:
+                break
+        if read and not self.stop.is_set():
+            self.phase = "exporting"
+            self.written += p.export(self.batch, self.limit and self.limit - self.written)
+        self.phase = after
+        self.stop.wait(max(0, end - time.monotonic()))
 
     def at_limit(self, con):
         """With a limit set: once enough new leads wait for the sheet, export them now and stop."""
@@ -393,7 +410,7 @@ def stats():
         "run_with_email": sum(1 for e in current if e.get("emails")),
         "batch": p.lines("data/batch.txt") if (p.DATA / "batch.txt").exists() else [],
         "searches_total": searches_total, "searches_done": searches_done,
-        "leads": one("SELECT COUNT(*) FROM leads"),
+        "leads": one(f"SELECT COUNT(*) FROM leads WHERE {p.LIVE}"),
         "emails_ok": one(f"SELECT COUNT(*) FROM leads WHERE {p.VERIFIED}"),
         "mobiles": one("SELECT COUNT(*) FROM leads WHERE phone_e164 IS NOT NULL"),
         "both": one(f"SELECT COUNT(*) FROM leads WHERE {p.VERIFIED} AND phone_e164 IS NOT NULL"),

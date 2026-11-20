@@ -13,6 +13,8 @@ async def no_wait(s):
 
 
 e.pause = no_wait  # politeness delays are recorded, not slept
+real_gone = e.domain_gone
+e.domain_gone = lambda host: False  # no real DNS in tests
 
 HTML = {"content-type": "text/html; charset=utf-8"}
 TEXT = {"content-type": "text/plain"}
@@ -68,6 +70,33 @@ r, hits = crawl({"https://smile.ae/robots.txt": [httpx.Response(503, headers=TEX
 assert r["status"] == "timeout" and all(h.endswith("robots.txt") for h in hits)
 r, hits = crawl({"https://smile.ae/robots.txt": httpx.ConnectTimeout("slow")})
 assert r["status"] == "timeout"
+
+# a domain with no DNS record is "gone": the business's website was deleted
+e.domain_gone = lambda host: host == "smile.ae"
+r, _ = crawl({"https://smile.ae/robots.txt": httpx.ConnectError("no such host")})
+assert r["status"] == "gone", r
+e.domain_gone = lambda host: False
+
+# domain_gone: only a "no such name" answer counts, and only while DNS itself works
+import socket
+real_dns = e.socket.getaddrinfo
+
+
+def dns(known):
+    def getaddrinfo(host, *a, **k):
+        if host in known:
+            return [()]
+        raise socket.gaierror(socket.EAI_NONAME, "not found")
+    return getaddrinfo
+
+
+e.domain_gone = real_gone
+e.socket.getaddrinfo = dns({"example.com"})
+assert e.domain_gone("gone-joinery.co.uk") and not e.domain_gone("example.com")
+e.socket.getaddrinfo = dns(set())
+assert not e.domain_gone("gone-joinery.co.uk")  # our own DNS is down: never call a site gone
+e.socket.getaddrinfo = real_dns
+e.domain_gone = lambda host: False
 
 # robots.txt that isn't text (a binary file) can't be read -> skip the site, never treat it as "allow all"
 r, hits = crawl({"https://smile.ae/robots.txt": httpx.Response(200, headers={"content-type": "application/octet-stream"},

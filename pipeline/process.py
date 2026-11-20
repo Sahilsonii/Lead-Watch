@@ -18,6 +18,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import quote_plus
 
 import dns.resolver
 import openpyxl
@@ -404,7 +405,7 @@ def save_enrichment(con, place_id, res):
 VERIFIED = "COALESCE(email_status, '') IN ('smtp_ok', 'catch_all', 'mx_ok')"
 GOOD_EMAIL = {"smtp_ok", "catch_all", "mx_ok"}
 COLUMNS = ["Business Name", "Owner Name", "Owner Source", "Address/Location", "Postcode", "City", "Region",
-           "Country", "Business Sector", "Category", "Phone", "Email", "WhatsApp", "Best Way to Reach", "Website", "Total Google Reviews",
+           "Country", "Business Sector", "Category", "Phone", "Email", "WhatsApp", "Best Way to Reach", "Website", "Maps Link", "Total Google Reviews",
            "Rating", "Short Brief", "Date Added", "Authenticity Verdict", "Social Links", "Sources"]
 OWNER_RANK = ["Website structured data", "Website team page", "Companies House owner", "Business name",
               "Companies House director", "Website email link", "LinkedIn search result", "Email address (guess)"]
@@ -496,6 +497,15 @@ def country_name(code):
     return geocoder._region_display_name(code, "en") or code or ""  # phonenumbers' bundled names
 
 
+def maps_link(r):
+    """Where a person can check the lead: its Google Maps listing, else a Google Maps search for name and address."""
+    link = r["maps_link"] or ""
+    if "google.com/maps/place" in link:
+        return link
+    query = ", ".join(v for v in (r["name"], r["address"]) if v)
+    return f"https://www.google.com/maps/search/?api=1&query={quote_plus(query)}" if query else link
+
+
 def lead_row(r):
     r = dict(r)
     e = json.loads(r["raw"] or "{}")
@@ -509,9 +519,15 @@ def lead_row(r):
     social = " ".join(dict.fromkeys(l for l in links if l))
     return [r["name"], owner, source, r["address"], addr.get("postal_code") or "", city, addr.get("state") or "",
             country_name(r["country"] or cc), sector, r["category"], pretty_phone(r["phone"], cc), r["email"] if r["email_status"] in GOOD_EMAIL else "",
-            pretty_phone(r["phone_e164"], cc), best_way(r, website, social), website, r["reviews"], r["rating"],
+            pretty_phone(r["phone_e164"], cc), best_way(r, website, social), website, maps_link(r), r["reviews"], r["rating"],
             brief(e, r, city), (r["scraped_at"] or "")[:10], verdict(e, r), social,
             r.get("sources") or "google_maps"]
+
+
+# Sahil: a lead needs a phone and a running business. A deleted website (site_status 'gone') or a listing marked
+# closed keeps its row, so the next search never adds it again, but it never reaches the files.
+LIVE = """(COALESCE(phone, '') <> '' OR phone_e164 IS NOT NULL) AND COALESCE(site_status, '') <> 'gone'
+          AND LOWER(COALESCE(json_extract(raw, '$.status'), '')) NOT LIKE '%closed%'"""
 
 
 def dedupe_contacts(rows):
@@ -531,7 +547,7 @@ def exportable(con):
     leads first, one row per contact."""
     con.row_factory = sqlite3.Row
     return dedupe_contacts(con.execute(f"""
-        SELECT * FROM leads
+        SELECT * FROM leads WHERE {LIVE}
         ORDER BY ({VERIFIED}) + (phone_e164 IS NOT NULL) DESC, reviews DESC""").fetchall())
 
 
@@ -539,7 +555,7 @@ def not_in_sheet(con):
     """Exportable leads not yet in leads.xlsx. Leads already there go first in the dedupe, so a new listing of a
     contact the sheet already has is never added again."""
     con.row_factory = sqlite3.Row
-    rows = con.execute(f"SELECT * FROM leads "
+    rows = con.execute(f"SELECT * FROM leads WHERE {LIVE} "
                        f"ORDER BY xlsx_batch IS NULL, ({VERIFIED}) + (phone_e164 IS NOT NULL) DESC, reviews DESC").fetchall()
     return [r for r in dedupe_contacts(rows) if r["xlsx_batch"] is None]
 
@@ -626,7 +642,7 @@ def sheet_blocks(con, batch, new):
     """[(heading, rows)]: every Start's leads so far, oldest first, with this run's new leads added to its block."""
     con.row_factory = sqlite3.Row
     blocks = {}
-    for r in con.execute(f"SELECT * FROM leads WHERE xlsx_batch IS NOT NULL ORDER BY xlsx_batch, "
+    for r in con.execute(f"SELECT * FROM leads WHERE xlsx_batch IS NOT NULL AND {LIVE} ORDER BY xlsx_batch, "
                          f"({VERIFIED}) + (phone_e164 IS NOT NULL) DESC, reviews DESC"):
         blocks.setdefault(r["xlsx_batch"], []).append(r)
     blocks.setdefault(batch, []).extend(new)

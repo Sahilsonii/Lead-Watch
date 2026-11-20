@@ -119,7 +119,7 @@ assert lead("g4")["website"] == "https://bright.ae" and lead("g4")["enriched_at"
 row = p.lead_row(g5)
 assert len(row) == len(p.COLUMNS) and row[-1] == "google_maps osm"
 row = p.lead_row(lead("osm:node/2"))
-assert row[0] == "Smile Dental Marina" and row[8] == "dentist" and row[-1] == "osm" and "Google reviews" in row[17]
+assert row[0] == "Smile Dental Marina" and row[8] == "dentist" and row[-1] == "osm" and "Google reviews" in row[18]
 
 # old databases get the match keys filled in from the stored Google data
 old = p.DATA / "old.db"

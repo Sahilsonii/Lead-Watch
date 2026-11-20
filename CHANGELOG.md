@@ -29,6 +29,8 @@ Kept up to date after every step, so the work can continue from any account or s
 - 2026-11-20 19:59 IST, Sahil asked if the 28,474 carpenter leads are real. Checked: all are UK carpenters, all but 1 from Foursquare/Overture whole-country loads; 99.5% have a valid UK phone format; a few are spam or mis-tagged. Offered a freshness filter (drop Foursquare places not refreshed in years); Sahil: **not now**.
 - 2026-11-20 20:10 IST, Sahil: "can't see leads from Google Maps or websites in the file", "should be country specific leads only". Google was answering with Indian results (fixed, see Unreleased, Fixed); every stored lead is in the UK (the box filter and the open-data country filters held). Website data was in leads.csv; leads.xlsx (OneDrive) was stale since 17:28 and is now rebuilt with Best Way to Reach and Country. Dashboard restarted on the fix.
 - 2026-11-20 20:22 IST: live check of the Google fixes (place name in the search, country filter instead of the village box): one search (carpenter, Abbey Dore) gave 80 new leads and matched 40 open-data leads; Google leads went from 1 to 101, all in the UK. Dashboard restarted on 6c3453f.
+- 2026-11-21 02:45 IST, Sahil: website reading looked stopped. It wasn't (the 20:40 seen was UTC = 02:10 IST); it was idle 95% of the time behind Google's pause. Sahil: read through the pause, drop dead-website leads, keep only running businesses with a phone, and add a link a person can check. All done (see Unreleased, Added). 34 of 40 sampled "timeout" sites had no DNS record; the 931 old timeouts are queued to be re-read.
+- Still open from 02:23: which more fields and open datasets to add for marketing (asked how Sahil will market: email, WhatsApp, calls, ads).
 
 ## Unreleased
 

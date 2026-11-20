@@ -119,7 +119,7 @@ Place data comes from [GeoNames](https://www.geonames.org/) (CC BY 4.0), downloa
 
 `data/leads.csv` (every lead, rewritten each cycle) and `data/leads.xlsx` (a running history: each time you press Start, the date and time, a blank row, then the leads that run added, so each lead appears once) with 20 columns:
 
-> Business Name · Owner Name · Owner Source · Address/Location · Postcode · City · Region · Country · Business Sector · Category · Phone · Email · WhatsApp · Best Way to Reach · Website · Total Google Reviews · Rating · Short Brief · Date Added · Authenticity Verdict · Social Links · Sources
+> Business Name · Owner Name · Owner Source · Address/Location · Postcode · City · Region · Country · Business Sector · Category · Phone · Email · WhatsApp · Best Way to Reach · Website · Maps Link · Total Google Reviews · Rating · Short Brief · Date Added · Authenticity Verdict · Social Links · Sources
 
 <details>
 <summary><b>What each tricky column means</b></summary>
@@ -127,6 +127,8 @@ Place data comes from [GeoNames](https://www.geonames.org/) (CC BY 4.0), downloa
 - **Owner Name** is best effort. **Owner Source** says where it came from, best first: Website structured data, Website team page, Companies House owner (UK, over 25% of the company), Business name ("Dr. …", or a doctor the site names who is also in the business name), Companies House director (UK, companies with at most 2 directors), Website email link (a named mailto link), LinkedIn search result, Email address (guess), or Not found. A weaker source never replaces a stronger one. Two owners or founders listed side by side are both kept ("Brendan Powell & Melanie Piche"). Company-looking names ("SMILE DENTAL LTD") are never used as owners.
 - **Phone** and **WhatsApp** use each country's standard grouping with the country code (`+971 4 566 2262`, `+44 20 7946 0958`, `+1 416-555-0199`), however Google wrote them. A number that can't be parsed is left as it was.
 - **Country** is the full country name ("United Kingdom"), from the lead's stored country code.
+- **Maps Link** lets a person check any lead in one click: the Google Maps listing itself for Google leads, otherwise a Google Maps search for the business name and address.
+- **Only live leads reach the files:** a lead needs a phone number, and is left out when its website's domain no longer exists ("gone") or its listing is marked closed. Its row stays in the database so the next search never adds it again.
 - **Best Way to Reach** names the strongest channel the lead has, in this order: WhatsApp (a mobile number), Email (a verified email), Call (any phone), Website (its own site, for the contact form), Social media. It is blank when the lead has none of these.
 - **WhatsApp** is the mobile number. It is likely on WhatsApp but not checked. It keeps its spaces for reading; strip them and the `+` for a `wa.me/` link: `+971 50 123 4567` → `wa.me/971501234567`.
 - **Website** is empty when the Maps "website" is really a Facebook, Instagram or directory page; that link moves to **Social Links**, with the Instagram, Facebook, LinkedIn and other profiles found on the site.

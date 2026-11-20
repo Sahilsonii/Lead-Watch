@@ -82,9 +82,9 @@ assert con.execute("SELECT owner_name, owner_source FROM leads WHERE place_id='a
 
 con.row_factory = p.sqlite3.Row
 row = p.lead_row(con.execute("SELECT * FROM leads WHERE place_id='b'").fetchone())
-assert len(p.COLUMNS) == 22 and len(row) == 22
-assert p.COLUMNS[:20] == ["Business Name", "Owner Name", "Owner Source", "Address/Location", "Postcode", "City", "Region",
-                          "Country", "Business Sector", "Category", "Phone", "Email", "WhatsApp", "Best Way to Reach", "Website",
+assert len(p.COLUMNS) == 23 and len(row) == 23
+assert p.COLUMNS[:21] == ["Business Name", "Owner Name", "Owner Source", "Address/Location", "Postcode", "City", "Region",
+                          "Country", "Business Sector", "Category", "Phone", "Email", "WhatsApp", "Best Way to Reach", "Website", "Maps Link",
                           "Total Google Reviews", "Rating", "Short Brief", "Date Added", "Authenticity Verdict"]
 cols = dict(zip(p.COLUMNS, row))
 a_row = dict(zip(p.COLUMNS, p.lead_row(con.execute("SELECT * FROM leads WHERE place_id='a'").fetchone())))
@@ -92,6 +92,22 @@ a_row = dict(zip(p.COLUMNS, p.lead_row(con.execute("SELECT * FROM leads WHERE pl
 assert cols["Country"] == "United Arab Emirates"
 con.execute("UPDATE leads SET country='GB' WHERE place_id='b'")
 assert dict(zip(p.COLUMNS, p.lead_row(con.execute("SELECT * FROM leads WHERE place_id='b'").fetchone())))["Country"] == "United Kingdom"
+# Maps Link: the Google listing itself, else a Google Maps search for the name and address, so a person can check
+assert p.maps_link({"maps_link": "https://www.google.com/maps/place/X/data=1", "name": "X", "address": "1 St"})     == "https://www.google.com/maps/place/X/data=1"
+assert p.maps_link({"maps_link": "https://www.openstreetmap.org/node/1", "name": "Smile & Co", "address": "1 High St, Leeds"})     == "https://www.google.com/maps/search/?api=1&query=Smile+%26+Co%2C+1+High+St%2C+Leeds"
+assert cols["Maps Link"].startswith("https://www.google.com/maps/search/?api=1&query=Smile+Clinic")
+
+# only running businesses with a phone reach the files: no phone, a deleted website, or closed are left out
+live = p.db(":memory:")
+live.executemany("INSERT INTO leads(place_id, name, phone, site_status, raw, xlsx_batch) VALUES (?,?,?,?,?,?)",
+                 [("ok", "Ok", "+44 20 7946 0000", None, "{}", None), ("nophone", "No", "", None, "{}", None),
+                  ("gone", "Gone", "+44 20 7946 0001", "gone", "{}", None),
+                  ("shut", "Shut", "+44 20 7946 0002", None, json.dumps({"status": "Permanently closed"}), None)])
+assert [r["place_id"] for r in p.exportable(live)] == ["ok"]
+assert [r["place_id"] for r in p.not_in_sheet(live)] == ["ok"]
+live.execute("UPDATE leads SET xlsx_batch = '2026-11-21 02:00'")
+assert [len(rows) for _, rows in p.sheet_blocks(live, "2026-11-21 03:00", [])] == [1]  # already in the sheet: dropped too
+
 # Best Way to Reach: the strongest channel the lead has (mobile, verified email, any phone, own site, social page)
 assert a_row["Best Way to Reach"] == "WhatsApp" and cols["Best Way to Reach"] == "Social media"
 none = {"phone_e164": None, "email": None, "email_status": None, "phone": None}

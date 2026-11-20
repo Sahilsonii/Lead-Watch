@@ -117,6 +117,23 @@ r.loop()
 assert order == ["scrape", "osm", "fsq", "overture", "enrich", "linkedin", "export"], order  # new places get their sites read
 assert r.sources["foursquare"]["skipped"] == "no HF_TOKEN"
 
+# Google's 30-minute rest is spent reading websites (other hosts), then one export
+batches, exported = [5, 3, 0], []
+
+
+async def batch_enrich(con, limit, stop):
+    return {"crawled": batches.pop(0) if batches else 0}
+d.enrich.enrich_pending = batch_enrich
+d.p.export = lambda *a: exported.append(a) or 0
+r = d.Runner()
+r.rest(0.3)
+assert batches == [] and len(exported) == 1, (batches, exported)
+r.stop.set()
+batches[:] = [9]
+r.rest(5)
+assert batches == [9]  # Stop pressed: no reading during the rest
+d.enrich.enrich_pending = fake_enrich
+
 # "Stop after N new leads": once N wait for the sheet, export exactly N under this Start's date-time and stop
 exports, waiting = [], ["lead"] * 7
 d.p.not_in_sheet = lambda con: waiting

@@ -7,6 +7,7 @@ import asyncio
 import json
 import random
 import re
+import socket
 import urllib.robotparser
 from urllib.parse import urlsplit, urlunsplit
 
@@ -117,6 +118,24 @@ def result(status, **found):
             "pages": 0, **found}
 
 
+def domain_gone(host):
+    """True when DNS says the domain does not exist (the business's site was deleted). Checked only while a
+    well-known domain still resolves, so our own network being down never marks a site gone."""
+    def missing(name):
+        try:
+            socket.getaddrinfo(name, 443)
+            return False
+        except socket.gaierror as err:
+            return err.errno == socket.EAI_NONAME
+        except OSError:
+            return False
+    return bool(host) and missing(host) and not missing("example.com")
+
+
+async def unreachable(host):
+    return result("gone" if await asyncio.to_thread(domain_gone, host) else "timeout")
+
+
 async def crawl_site(client, url, business, phone, region, suffixes):
     url = (url or "").strip()
     if not url:
@@ -133,14 +152,14 @@ async def crawl_site(client, url, business, phone, region, suffixes):
     origin = f"{parts.scheme}://{parts.netloc}"
     rp = await robots_for(client, origin)
     if rp is None:
-        return result("timeout")
+        return await unreachable(parts.hostname)
     if not rp.can_fetch(USER_AGENT, url):
         return result("refused")
     wait = max(random.uniform(1, 2), float(rp.crawl_delay(USER_AGENT) or 0))
 
     got = await fetch(client, url)
     if got is None:
-        return result("timeout")
+        return await unreachable(parts.hostname)
     status, final, html = got
     if c.is_aggregator(final):
         return result("skipped", social=[final])
