@@ -321,6 +321,17 @@ def read_entries(path):
     return [json.loads(l) for l in text.splitlines() if l.strip()]  # JSON Lines
 
 
+def place_country(e):
+    """A Google place's country code: its address, else its phone's (service-area businesses list no address)."""
+    country = ((e.get("complete_address") or {}).get("country") or "").strip().upper()
+    if country:
+        return country
+    try:
+        return phonenumbers.region_code_for_number(phonenumbers.parse(e.get("phone") or "", None)) or ""
+    except phonenumbers.NumberParseException:
+        return ""
+
+
 def ingest(path, done_keys=()):
     """Upsert places by Google place id (so re-scrapes never duplicate), then mark done_keys searched.
     Returns (new, duplicates)."""
@@ -328,8 +339,7 @@ def ingest(path, done_keys=()):
     new = dup = 0
     for e in read_entries(path):
         key = e.get("place_id") or e.get("data_id") or e.get("link")
-        country = ((e.get("complete_address") or {}).get("country") or "").upper()
-        if not key or country and country != split_input(e.get("input_id"))[0]:
+        if not key or place_country(e) != split_input(e.get("input_id"))[0]:
             continue  # Google can answer a UK search with places abroad: only the searched country is kept
         k = match_keys(e)
         if con.execute("SELECT 1 FROM leads WHERE place_id = ?", (key,)).fetchone():
