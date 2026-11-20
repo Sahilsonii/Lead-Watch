@@ -82,12 +82,16 @@ assert con.execute("SELECT owner_name, owner_source FROM leads WHERE place_id='a
 
 con.row_factory = p.sqlite3.Row
 row = p.lead_row(con.execute("SELECT * FROM leads WHERE place_id='b'").fetchone())
-assert len(p.COLUMNS) == 21 and len(row) == 21
-assert p.COLUMNS[:19] == ["Business Name", "Owner Name", "Owner Source", "Address/Location", "Postcode", "City", "Region",
-                          "Business Sector", "Category", "Phone", "Email", "WhatsApp", "Best Way to Reach", "Website",
+assert len(p.COLUMNS) == 22 and len(row) == 22
+assert p.COLUMNS[:20] == ["Business Name", "Owner Name", "Owner Source", "Address/Location", "Postcode", "City", "Region",
+                          "Country", "Business Sector", "Category", "Phone", "Email", "WhatsApp", "Best Way to Reach", "Website",
                           "Total Google Reviews", "Rating", "Short Brief", "Date Added", "Authenticity Verdict"]
 cols = dict(zip(p.COLUMNS, row))
 a_row = dict(zip(p.COLUMNS, p.lead_row(con.execute("SELECT * FROM leads WHERE place_id='a'").fetchone())))
+# Country: the stored country code as a name, else the searched country
+assert cols["Country"] == "United Arab Emirates"
+con.execute("UPDATE leads SET country='GB' WHERE place_id='b'")
+assert dict(zip(p.COLUMNS, p.lead_row(con.execute("SELECT * FROM leads WHERE place_id='b'").fetchone())))["Country"] == "United Kingdom"
 # Best Way to Reach: the strongest channel the lead has (mobile, verified email, any phone, own site, social page)
 assert a_row["Best Way to Reach"] == "WhatsApp" and cols["Best Way to Reach"] == "Social media"
 none = {"phone_e164": None, "email": None, "email_status": None, "phone": None}

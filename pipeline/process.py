@@ -25,7 +25,7 @@ import phonenumbers
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Font
-from phonenumbers import PhoneNumberType as T
+from phonenumbers import PhoneNumberType as T, geocoder
 
 import contacts
 
@@ -393,7 +393,7 @@ def save_enrichment(con, place_id, res):
 VERIFIED = "COALESCE(email_status, '') IN ('smtp_ok', 'catch_all', 'mx_ok')"
 GOOD_EMAIL = {"smtp_ok", "catch_all", "mx_ok"}
 COLUMNS = ["Business Name", "Owner Name", "Owner Source", "Address/Location", "Postcode", "City", "Region",
-           "Business Sector", "Category", "Phone", "Email", "WhatsApp", "Best Way to Reach", "Website", "Total Google Reviews",
+           "Country", "Business Sector", "Category", "Phone", "Email", "WhatsApp", "Best Way to Reach", "Website", "Total Google Reviews",
            "Rating", "Short Brief", "Date Added", "Authenticity Verdict", "Social Links", "Sources"]
 OWNER_RANK = ["Website structured data", "Website team page", "Companies House owner", "Business name",
               "Companies House director", "Website email link", "LinkedIn search result", "Email address (guess)"]
@@ -480,6 +480,11 @@ def best_way(r, website, social):
     return ""
 
 
+def country_name(code):
+    """"GB" -> "United Kingdom"; anything that is not a code is kept as it is."""
+    return geocoder._region_display_name(code, "en") or code or ""  # phonenumbers' bundled names
+
+
 def lead_row(r):
     r = dict(r)
     e = json.loads(r["raw"] or "{}")
@@ -492,7 +497,7 @@ def lead_row(r):
              *(r.get("social_links") or "").split(), r.get("linkedin_url")]
     social = " ".join(dict.fromkeys(l for l in links if l))
     return [r["name"], owner, source, r["address"], addr.get("postal_code") or "", city, addr.get("state") or "",
-            sector, r["category"], pretty_phone(r["phone"], cc), r["email"] if r["email_status"] in GOOD_EMAIL else "",
+            country_name(r["country"] or cc), sector, r["category"], pretty_phone(r["phone"], cc), r["email"] if r["email_status"] in GOOD_EMAIL else "",
             pretty_phone(r["phone_e164"], cc), best_way(r, website, social), website, r["reviews"], r["rating"],
             brief(e, r, city), (r["scraped_at"] or "")[:10], verdict(e, r), social,
             r.get("sources") or "google_maps"]
