@@ -362,7 +362,7 @@ def removed(con):
     out = {"total": 0, "reasons": {}, "sources": {}}
     for reason, source, n in con.execute(f"""
             SELECT CASE WHEN site_status = 'gone' THEN 'website gone'
-                        WHEN LOWER(COALESCE(json_extract(raw, '$.status'), '')) LIKE '%closed%' THEN 'closed'
+                        WHEN {p.CLOSED} THEN 'closed'
                         ELSE 'no phone' END,
                    COALESCE(NULLIF(sources, ''), 'google_maps'), COUNT(*)
             FROM leads WHERE NOT ({p.LIVE}) GROUP BY 1, 2"""):

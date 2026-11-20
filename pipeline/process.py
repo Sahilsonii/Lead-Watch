@@ -526,8 +526,9 @@ def lead_row(r):
 
 # Sahil: a lead needs a phone and a running business. A deleted website (site_status 'gone') or a listing marked
 # closed keeps its row, so the next search never adds it again, but it never reaches the files.
-LIVE = """(COALESCE(phone, '') <> '' OR phone_e164 IS NOT NULL) AND COALESCE(site_status, '') <> 'gone'
-          AND LOWER(COALESCE(json_extract(raw, '$.status'), '')) NOT LIKE '%closed%'"""
+CLOSED = "LOWER(CASE WHEN json_valid(raw) THEN COALESCE(json_extract(raw, '$.status'), '') ELSE '' END) LIKE '%closed%'"
+LIVE = f"""(COALESCE(phone, '') <> '' OR phone_e164 IS NOT NULL) AND COALESCE(site_status, '') <> 'gone'
+          AND NOT {CLOSED}"""
 
 
 def dedupe_contacts(rows):

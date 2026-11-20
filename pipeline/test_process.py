@@ -102,8 +102,10 @@ live = p.db(":memory:")
 live.executemany("INSERT INTO leads(place_id, name, phone, site_status, raw, xlsx_batch) VALUES (?,?,?,?,?,?)",
                  [("ok", "Ok", "+44 20 7946 0000", None, "{}", None), ("nophone", "No", "", None, "{}", None),
                   ("gone", "Gone", "+44 20 7946 0001", "gone", "{}", None),
-                  ("shut", "Shut", "+44 20 7946 0002", None, json.dumps({"status": "Permanently closed"}), None)])
-assert [r["place_id"] for r in p.exportable(live)] == ["ok"]
+                  ("shut", "Shut", "+44 20 7946 0002", None, json.dumps({"status": "Permanently closed"}), None),
+                  ("bad", "Bad raw", "+44 20 7946 0003", None, "{not json", None)])
+assert sorted(r["place_id"] for r in p.exportable(live)) == ["bad", "ok"]  # a broken raw never breaks the export
+live.execute("DELETE FROM leads WHERE place_id = 'bad'")
 assert [r["place_id"] for r in p.not_in_sheet(live)] == ["ok"]
 live.execute("UPDATE leads SET xlsx_batch = '2026-11-21 02:00'")
 assert [len(rows) for _, rows in p.sheet_blocks(live, "2026-11-21 03:00", [])] == [1]  # already in the sheet: dropped too
