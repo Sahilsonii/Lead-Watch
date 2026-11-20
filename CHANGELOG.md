@@ -32,6 +32,7 @@ Kept up to date after every step, so the work can continue from any account or s
 - 2026-11-21 02:45 IST, Sahil: website reading looked stopped. It wasn't (the 20:40 seen was UTC = 02:10 IST); it was idle 95% of the time behind Google's pause. Sahil: read through the pause, drop dead-website leads, keep only running businesses with a phone, and add a link a person can check. All done (see Unreleased, Added). 34 of 40 sampled "timeout" sites had no DNS record; the 931 old timeouts are queued to be re-read.
 - Still open from 02:23: which more fields and open datasets to add for marketing (asked how Sahil will market: email, WhatsApp, calls, ads).
 - 2026-11-21 02:55 IST: Removed card checked live in the browser: 29,000 unique (live) leads; 237 removed (167 no phone, 70 website gone) from 101 Overture, 73 Foursquare, 33 Google, 30 OpenStreetMap. The gone count grows as the ~10,000 unread and 931 re-queued sites are read. Dashboard restarted on 0d9683a.
+- 2026-11-21 03:00 IST, Sahil: "website reading is still stuck". It wasn't: ~690 sites in 3 minutes, but they were the 931 re-queued timeouts (566 gone), which the Websites card already counted. The card now shows sites left and gone (live: 9,991 left, 786 gone; Removed 953).
 
 ## Unreleased
 
