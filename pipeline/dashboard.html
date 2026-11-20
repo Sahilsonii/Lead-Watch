@@ -281,7 +281,7 @@
     $("h-stop").textContent = h.message || "";
 
     $("h-sites").textContent = fmt(en.crawled);
-    $("h-sites-sub").textContent = `${fmt(en.names)} owner names · ${fmt(en.blocked)} blocked`;
+    $("h-sites-sub").textContent = `${fmt(en.left || 0)} left · ${fmt(en.gone || 0)} gone · ${fmt(en.names)} owner names · ${fmt(en.blocked)} blocked`;
     $("h-li").textContent = fmt(d.owners.total);
     const src = d.sources, last = src.last || {}, o = last.osm || {}, f = last.foursquare || {}, v = last.overture || {};
     $("h-osm").textContent = fmt(src.osm);

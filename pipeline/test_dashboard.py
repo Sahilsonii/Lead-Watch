@@ -211,6 +211,7 @@ con.commit()
 s = d.stats()
 assert s["removed"] == {"total": 5, "reasons": {"no phone": 4, "website gone": 1},
                         "sources": {"osm": 2, "foursquare": 2, "google_maps": 1}}, s["removed"]
+assert s["enrich"]["gone"] == 1 and s["enrich"]["left"] == 0  # the card shows progress, not only a total
 assert s["leads"] == 0  # every lead here is removed, so none counts as a unique lead
 d.p.db = fake_db
 
