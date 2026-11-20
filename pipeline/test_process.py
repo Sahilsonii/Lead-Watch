@@ -141,6 +141,12 @@ os.environ["LEADS_XLSX"] = str(shared)
 p.export("2026-11-20 13:00")
 assert openpyxl.load_workbook(shared).active.max_row == sheet.max_row and not shared.with_suffix(".part").exists()
 del os.environ["LEADS_XLSX"]
+# a sheet from before a column change is rebuilt with the current columns, even with no new leads
+old = openpyxl.Workbook()
+old.active.append(p.COLUMNS[:-2])
+old.save(p.DATA / "leads.xlsx")
+assert p.export("2026-11-20 14:00") == 0
+assert [c.value for c in openpyxl.load_workbook(p.DATA / "leads.xlsx").active[1]] == p.COLUMNS
 assert a_row["Phone"] == "+971 50 123 4567" and a_row["WhatsApp"] == "+971 50 123 4567", a_row
 assert cols["Website"] == "" and "https://www.facebook.com/smile" in cols["Social Links"] and cols["Sources"] == "google_maps"
 con.row_factory = None

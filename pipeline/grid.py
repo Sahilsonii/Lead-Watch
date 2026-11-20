@@ -112,7 +112,8 @@ def next_run(con, fetch=http_get_json, load=geo.towns):
         bbox = (town and town["bbox"]) or location_bbox(con, location, cc, fetch, town and town["query"])
         if bbox:
             todo = [s for s in sectors if f"grid:{s}|{location}" not in done]
-            inputs = [f"{s} #!#{cc}|{s}|{location}" for s in todo]
+            where = (town and town["query"]) or location  # without a place name Google answers near the searcher's IP
+            inputs = [f"{s} in {where} #!#{cc}|{s}|{location}" for s in todo]
             keys = [f"grid:{s}|{location}" for s in todo]
         else:
             todo = [s for s in sectors if plain_key(s, location) not in done]

@@ -546,11 +546,22 @@ def export(batch=None, limit=None):
     batch = batch or time.strftime("%Y-%m-%d %H:%M")
     new = not_in_sheet(con)[:limit]
     sheet = Path(os.environ.get("LEADS_XLSX") or DATA / "leads.xlsx")  # e.g. a shared OneDrive folder
-    if (not new and sheet.exists()) or not write_xlsx(sheet, sheet_blocks(con, batch, new)):
-        return 0  # nothing new (a deleted sheet is rebuilt), or the sheet is open in Excel
+    if (not new and header(sheet) == COLUMNS) or not write_xlsx(sheet, sheet_blocks(con, batch, new)):
+        return 0  # nothing new (a deleted or old-column sheet is rebuilt), or the sheet is open in Excel
     con.executemany("UPDATE leads SET xlsx_batch = ? WHERE place_id = ?", [(batch, r["place_id"]) for r in new])
     con.commit()
     return len(new)
+
+
+def header(path):
+    """The sheet's first row, [] when there is no sheet."""
+    if not path.exists():
+        return []
+    wb = openpyxl.load_workbook(path, read_only=True)
+    try:
+        return [c.value for c in next(wb.active.iter_rows(max_row=1))]
+    finally:
+        wb.close()
 
 
 def write_xlsx(path, blocks):

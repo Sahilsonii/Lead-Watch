@@ -27,6 +27,7 @@ Kept up to date after every step, so the work can continue from any account or s
 - 2026-11-20 19:53 IST, Sahil: "restart the dashboard ... it was stuck, start with new again". The cause, gosom hanging after it finished, is fixed (see Unreleased, Fixed) (test first; all 13 test scripts pass). The old dashboard and the hung container were stopped, the stuck run was cleared so it starts fresh, and the dashboard was restarted with `LEADS_XLSX` (OneDrive) and `HF_TOKEN` set.
 - 2026-11-20 19:58 IST, Sahil: "add country column in data too". Done: a Country column after Region (see Unreleased, Added); all 13 test scripts pass. The first search after the restart finished cleanly in about 3 minutes.
 - 2026-11-20 19:59 IST, Sahil asked if the 28,474 carpenter leads are real. Checked: all are UK carpenters, all but 1 from Foursquare/Overture whole-country loads; 99.5% have a valid UK phone format; a few are spam or mis-tagged. Offered a freshness filter (drop Foursquare places not refreshed in years); Sahil: **not now**.
+- 2026-11-20 20:10 IST, Sahil: "can't see leads from Google Maps or websites in the file", "should be country specific leads only". Google was answering with Indian results (fixed, see Unreleased, Fixed); every stored lead is in the UK (the box filter and the open-data country filters held). Website data was in leads.csv; leads.xlsx (OneDrive) was stale since 17:28 and is now rebuilt with Best Way to Reach and Country. Dashboard restarted on the fix.
 
 ## Unreleased
 
@@ -65,6 +66,8 @@ Kept up to date after every step, so the work can continue from any account or s
 
 ### Fixed
 
+- Google added almost nothing (0–1 places per search since 17:01): grid searches sent the bare keyword ("carpenter"), and from an Indian IP Google ignored the map position and answered with carpenters in Pune; the box filter then dropped them all. Grid searches now name the place ("carpenter in Ailsworth, England"); a live test returned Peterborough-area carpenters. The 5 wasted village searches were queued again.
+- `leads.xlsx` was only rewritten when there were new leads, so after a column change it kept the old columns. A sheet whose header differs from the current columns is now rebuilt.
 - The run sat on "scraping" for an hour (carpenter, Acklington, 2026-11-20 18:46): gosom logged "scrapemate exited" but its headless Chromium never closed, so the container never ended. The runner now watches the log and stops the container a minute after that line, counting the run as finished.
 - "Pressed Start, nothing happens": the country picked in the dropdown only became a target after pressing Add, so Save stored the sector with no locations. Save and Start now take a picked country as "All of <country>" (an already-listed country is not widened), Start saves unsaved changes first, and with no country or sector it says what is missing.
 - Docker Desktop closed: every scrape failed ("scraper failed (exit 1)") and the run waited the full Google pause. The runner now checks Docker before each scrape, opens Docker Desktop and gives it 2 minutes, otherwise shows "Docker Desktop is not running" and retries in a minute, with no pause and no resume used up.

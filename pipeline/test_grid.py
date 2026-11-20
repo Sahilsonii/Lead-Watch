@@ -37,7 +37,7 @@ f = fake([["25.0", "25.3", "55.0", "55.3"], ["51.3", "51.7", "-0.6", "0.4"]])  #
 run = grid.next_run(con, f)
 assert run["mode"] == "grid" and run["location"] == "Dubai" and run["cc"] == "AE"
 assert run["bbox"] == "25.0,55.0,25.3,55.3" and run["cell_km"] == grid.CELL_KM
-assert run["inputs"] == ["dentist #!#AE|dentist|Dubai", "real estate agency #!#AE|real estate agency|Dubai"]
+assert run["inputs"] == ["dentist in Dubai #!#AE|dentist|Dubai", "real estate agency in Dubai #!#AE|real estate agency|Dubai"]
 assert run["keys"] == ["grid:dentist|Dubai", "grid:real estate agency|Dubai"]
 assert grid.next_run(con, f)["location"] == "Dubai" and len(f.calls) == 1  # bbox cached
 
@@ -76,7 +76,7 @@ con.execute("INSERT INTO queries(q) VALUES ('dentist in Dubai')")
 run = grid.next_run(con, f, load)  # a village: its own box, no geocoding
 assert run["location"] == "Hatta" and run["mode"] == "grid" and run["bbox"] == "24.78,56.09,24.82,56.13" and len(f.calls) == 2
 assert run["area"] == {"level": "village", "n": 1, "of": 1, "state": "Dubai"}
-assert run["inputs"] == ["dentist #!#AE|dentist|Hatta"]
+assert run["inputs"] == ["dentist in Hatta, Dubai #!#AE|dentist|Hatta"]  # Google ignores the map without a place name
 assert grid.progress(con, load) == (2, 4)
 con.execute("INSERT INTO queries(q) VALUES ('grid:dentist|Hatta')")
 assert grid.progress(con, load) == (3, 4)  # a given box counts as grid mode without a cached geocode
