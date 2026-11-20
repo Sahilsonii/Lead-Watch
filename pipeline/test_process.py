@@ -129,6 +129,14 @@ assert sheet.max_row == 3 + waiting and "2026-11-20 11:00" not in [c.value for c
 assert p.export("2026-11-20 12:00") == 0
 again = openpyxl.load_workbook(p.DATA / "leads.xlsx").active
 assert again.max_row == sheet.max_row and again["A2"].value == "2026-11-20 10:00"
+# LEADS_XLSX: the Excel file can live elsewhere, such as a OneDrive folder shared with the team
+import os
+shared = p.DATA / "OneDrive - Team" / "Lead Watch leads.xlsx"
+shared.parent.mkdir()
+os.environ["LEADS_XLSX"] = str(shared)
+p.export("2026-11-20 13:00")
+assert openpyxl.load_workbook(shared).active.max_row == sheet.max_row and not shared.with_suffix(".part").exists()
+del os.environ["LEADS_XLSX"]
 assert a_row["Phone"] == "+971 50 123 4567" and a_row["WhatsApp"] == "+971 50 123 4567", a_row
 assert cols["Website"] == "" and "https://www.facebook.com/smile" in cols["Social Links"] and cols["Sources"] == "google_maps"
 con.row_factory = None

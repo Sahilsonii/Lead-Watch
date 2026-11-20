@@ -186,6 +186,7 @@ Set these as environment variables before starting the dashboard.
 | `BRAVE_API_KEY` | (none) | Turns on LinkedIn name lookups (Brave asks for a card) |
 | `BRAVE_MONTHLY_CAP` | 1000 | Hard cap on Brave searches per month |
 | `SMTP_CHECK` | off | `1` adds an SMTP mailbox check |
+| `LEADS_XLSX` | `data/leads.xlsx` | Where the Excel file is written, such as a [shared OneDrive folder](#-share-the-excel-file-onedrive) |
 
 `blocked_domains.txt` lists website domains that are never read (government and health-service sites by default: `.gov`, `.gov.uk`, `.nhs.uk`, …). Add one suffix per line.
 
@@ -273,6 +274,24 @@ To turn it on:
 - [ ] Set the key in your environment, never in a file: `$env:BRAVE_API_KEY = "..."`, then start the dashboard.
 
 Lead Watch also stops at `BRAVE_MONTHLY_CAP`, on Brave's "limit reached" responses, and when Brave rejects the key.
+
+</details>
+
+### 📗 Share the Excel file (OneDrive)
+
+<details>
+<summary><b>How to give the team the Excel file online</b></summary>
+
+Point `LEADS_XLSX` at a file inside your OneDrive folder. Lead Watch writes the Excel file there after each export, and OneDrive puts it online, where the team opens it in Excel for the web or the Excel app. No extra account or key.
+
+- [ ] Make a folder in OneDrive, such as `Lead Watch`, and share it with the team (right-click → **Share**), view only.
+- [ ] Save the location as a user environment variable, then restart the dashboard:
+
+```powershell
+[Environment]::SetEnvironmentVariable("LEADS_XLSX", "$env:OneDrive\Lead Watch\leads.xlsx", "User")
+```
+
+The file is rebuilt from the database on every export, so **changes made in it are overwritten**: share it view only, and keep call notes in a separate file. While the file is open in the Excel app on this PC, Windows locks it and the export waits (the dashboard says so); a teammate viewing it online does not block it. `leads.csv` and the database stay in `data/`.
 
 </details>
 

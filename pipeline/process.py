@@ -540,7 +540,7 @@ def export(batch=None, limit=None):
     (DATA / "ATTRIBUTION.txt").write_text(ATTRIBUTION, encoding="utf-8")  # travels with leads.csv
     batch = batch or time.strftime("%Y-%m-%d %H:%M")
     new = not_in_sheet(con)[:limit]
-    sheet = DATA / "leads.xlsx"
+    sheet = Path(os.environ.get("LEADS_XLSX") or DATA / "leads.xlsx")  # e.g. a shared OneDrive folder
     if (not new and sheet.exists()) or not write_xlsx(sheet, sheet_blocks(con, batch, new)):
         return 0  # nothing new (a deleted sheet is rebuilt), or the sheet is open in Excel
     con.executemany("UPDATE leads SET xlsx_batch = ? WHERE place_id = ?", [(batch, r["place_id"]) for r in new])
