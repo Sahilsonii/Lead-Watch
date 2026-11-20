@@ -357,6 +357,22 @@ def save_targets(body):
     (p.ROOT / "cities.txt").write_text("".join(f"{c},{cc}\n" for c, cc in locations), encoding="utf-8")
 
 
+def removed(con):
+    """Leads kept out of the files (see process.LIVE), by reason and by the source that found them first."""
+    out = {"total": 0, "reasons": {}, "sources": {}}
+    for reason, source, n in con.execute(f"""
+            SELECT CASE WHEN site_status = 'gone' THEN 'website gone'
+                        WHEN LOWER(COALESCE(json_extract(raw, '$.status'), '')) LIKE '%closed%' THEN 'closed'
+                        ELSE 'no phone' END,
+                   COALESCE(NULLIF(sources, ''), 'google_maps'), COUNT(*)
+            FROM leads WHERE NOT ({p.LIVE}) GROUP BY 1, 2"""):
+        first = source.split()[0]
+        out["total"] += n
+        out["reasons"][reason] = out["reasons"].get(reason, 0) + n
+        out["sources"][first] = out["sources"].get(first, 0) + n
+    return out
+
+
 def stats():
     con = p.db()
     one = lambda sql: con.execute(sql).fetchone()[0]
@@ -395,6 +411,7 @@ def stats():
                    "names": one("SELECT COUNT(*) FROM leads WHERE owner_source LIKE 'Website%'"),
                    "blocked": one("SELECT COUNT(*) FROM leads WHERE site_status = 'blocked'")},
         "linkedin": {"used": used, "cap": cap} if os.environ.get("BRAVE_API_KEY") else {"skipped": "no BRAVE_API_KEY"},
+        "removed": removed(con),
         "owners": {"total": one("SELECT COUNT(*) FROM leads WHERE owner_name IS NOT NULL"),
                    "companies_house": one("SELECT COUNT(*) FROM leads WHERE owner_source LIKE 'Companies House%'")
                    if os.environ.get("COMPANIES_HOUSE_KEY") else None},

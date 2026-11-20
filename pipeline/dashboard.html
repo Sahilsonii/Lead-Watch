@@ -81,13 +81,14 @@
   .save .hint.dirty { color: var(--amber); }
 
   /* funnel: how raw places turn into reachable leads */
-  .funnel { display: grid; grid-template-columns: repeat(5, 1fr); overflow: hidden; margin-bottom: 12px; }
+  .funnel { display: grid; grid-template-columns: repeat(6, 1fr); overflow: hidden; margin-bottom: 12px; }
   .stage { padding: 14px 16px; border-left: 1px solid var(--line); position: relative; }
   .stage:first-child { border-left: 0; }
   .stage .label { font-size: 12px; color: var(--dim); }
   .stage .num { font-size: 26px; font-weight: 500; margin-top: 2px; }
-  .stage .sub { font-size: 12px; color: var(--faint); }
+  .stage .sub { font-size: 12px; color: var(--faint); white-space: pre-line; }
   .stage.win .num { color: var(--signal); }
+  .stage.removed .num { color: var(--dim); }
   .stage:not(:last-child)::after { content: "›"; position: absolute; right: -6px; top: 50%; transform: translateY(-50%);
     color: var(--faint); background: var(--panel); font-size: 16px; line-height: 1; padding: 2px 0; }
 
@@ -199,6 +200,7 @@
       <section class="card funnel" aria-label="Lead funnel">
         <div class="stage"><div class="label">Places this run</div><div class="num" id="f-places">–</div><div class="sub" id="f-places-sub"></div></div>
         <div class="stage"><div class="label">Unique leads saved</div><div class="num" id="f-leads">–</div><div class="sub" id="f-dups"></div></div>
+        <div class="stage removed"><div class="label">Removed</div><div class="num" id="f-removed">–</div><div class="sub" id="f-removed-sub"></div></div>
         <div class="stage win"><div class="label">Email verified</div><div class="num" id="f-email">–</div><div class="sub">domain receives mail</div></div>
         <div class="stage"><div class="label">Mobile numbers</div><div class="num" id="f-mobile">–</div><div class="sub">likely on WhatsApp</div></div>
         <div class="stage win"><div class="label">Email + mobile</div><div class="num" id="f-both">–</div><div class="sub">best leads</div></div>
@@ -443,6 +445,13 @@
     $("f-places-sub").textContent = `${fmt(d.run_with_email)} with an email on their site`;
     $("f-leads").textContent = fmt(d.leads);
     $("f-dups").textContent = `${fmt(d.dups_total)} duplicates skipped`;
+    const rm = d.removed || {total: 0, reasons: {}, sources: {}};
+    const names = {google_maps: "Google", foursquare: "Foursquare", overture: "Overture", osm: "OpenStreetMap"};
+    const list = (o, label) => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${fmt(n)} ${label(k)}`).join(" · ");
+    $("f-removed").textContent = fmt(rm.total);
+    $("f-removed-sub").textContent = rm.total ? `${list(rm.reasons, k => k)}
+from ${list(rm.sources, k => names[k] || k)}`
+                                              : "dead sites, closed, no phone";
     $("f-email").textContent = fmt(d.emails_ok);
     $("f-mobile").textContent = fmt(d.mobiles);
     $("f-both").textContent = fmt(d.both);

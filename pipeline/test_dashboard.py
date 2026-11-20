@@ -204,6 +204,14 @@ assert [x[1] for x in d.other_source_leads(con)] == ["foursquare:3", "osm:2"]
 feed = d.stats()["feed"]
 assert {(r["name"], r["source"]) for r in feed} == {("c", "Google Maps"), ("New OSM place", "OpenStreetMap"),
                                                     ("New FSQ place", "Foursquare")}, feed
+# Removed card: leads kept out of the files, by reason and by the source that found them first
+add("fsq:9", "foursquare overture", "Gone site")
+con.execute("UPDATE leads SET phone = '+44 20 7946 0000', site_status = 'gone' WHERE place_id = 'fsq:9'")
+con.commit()
+s = d.stats()
+assert s["removed"] == {"total": 5, "reasons": {"no phone": 4, "website gone": 1},
+                        "sources": {"osm": 2, "foursquare": 2, "google_maps": 1}}, s["removed"]
+assert s["leads"] == 0  # every lead here is removed, so none counts as a unique lead
 d.p.db = fake_db
 
 # a resumed run is judged by its own log lines: an old "unusual traffic" line must not mark every resume blocked
