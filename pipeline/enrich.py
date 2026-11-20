@@ -179,10 +179,12 @@ async def crawl_site(client, url, business, phone, region, suffixes):
         phones += [n for n in c.phones_in(page, region) if n not in phones]
         social += [s for s in c.social_links(page, page_url) if s not in social]
     ld = c.owner_from_json_ld([o for _, p in pages for o in c.json_ld(p)], business)
-    text = c.owner_from_text(" ".join(p.text for _, p in pages), business)
+    all_text = " ".join(p.text for _, p in pages)
+    text = c.owner_from_text(all_text, business)
+    in_name = c.owner_in_business(all_text, business)
     named = next(((n, "Email contact") for n in emails.values() if n), None)
     owner = (ld and (*ld, "Website structured data")) or (text and (*text, "Website team page")) \
-        or (named and (*named, "Website email link"))
+        or (in_name and (*in_name, "Business name")) or (named and (*named, "Website email link"))
     return result(status, emails=emails, phones=phones, social=social, owner=owner, pages=len(pages),
                   matches=any(c.site_matches_listing(pg.text, phone, business) for _, pg in pages))
 

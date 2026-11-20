@@ -32,7 +32,7 @@ tmp = Path(tempfile.mkdtemp())
 d.STATE_FILE = tmp / "state.json"
 d.p.DATA = tmp
 d.p.ingest = lambda path, keys: ingested.append(list(keys)) or (0, 0)
-d.p.export = lambda: 0
+d.p.export = lambda *a: 0
 d.p.db = lambda path=None: type("C", (), {"execute": lambda *a: []})()
 ingested, launched = [], []
 
@@ -106,12 +106,36 @@ d.osm.run_pending = lambda con, client, limit, stop: order.append("osm") or {"ne
 d.fsq.run_pending = lambda con, client, limit, stop: order.append("fsq") or {"new": 0, "merged": 0, "skipped": "no HF_TOKEN"}
 d.overture.run_pending = lambda con, client, limit, stop: order.append("overture") or {"new": 0, "merged": 0}
 r = d.Runner()
-d.p.export = lambda: order.append("export") or r.stop.set()
+d.p.export = lambda *a: order.append("export") or r.stop.set() or 0
 r.scrape_once = lambda run, resume: order.append("scrape")
 d.save_state(run=saved, running=True)
 r.loop()
 assert order == ["scrape", "osm", "fsq", "overture", "enrich", "linkedin", "export"], order  # new places get their sites read
 assert r.sources["foursquare"]["skipped"] == "no HF_TOKEN"
+
+# "Stop after N new leads": once N wait for the sheet, export exactly N under this Start's date-time and stop
+exports, waiting = [], ["lead"] * 7
+d.p.not_in_sheet = lambda con: waiting
+d.p.export = lambda batch=None, limit=None: exports.append((batch, limit)) or min(limit or 99, len(waiting))
+order = []
+r = d.Runner()
+r.scrape_once = lambda run, resume: order.append("scrape")
+d.save_state(run=saved, running=True)
+r.start(limit=5)
+r.thread.join(5)
+assert order == ["scrape"] and exports == [(r.batch, 5)], (order, exports)  # no other source, no website reading
+assert r.written == 5 and r.phase == "Stopped after 5 new leads" and d.load_state()["running"] is False
+assert d.time.strptime(r.batch, "%Y-%m-%d %H:%M")
+waiting = ["lead"] * 2
+r = d.Runner()
+r.limit, r.batch = 5, "2026-11-20 04:05"
+assert not r.at_limit(None) and not r.stop.is_set()  # 2 of 5: keep going
+r.limit = None
+assert not r.at_limit(None)  # no limit: the loop runs as before
+waiting, d.p.export = ["lead"] * 7, lambda *a: 0  # leads.xlsx open in Excel: nothing written
+r = d.Runner()
+r.limit, r.batch = 5, "2026-11-20 04:05"
+assert r.at_limit(None) and r.stop.is_set() and "open in Excel" in r.phase, r.phase
 
 # run panel: grid cells = rows x columns of the bbox, per sector; done = finished Maps search jobs in the log
 log = '{"message":"job finished","job":"Job{URL: https://www.google.com/maps/search/a}","status":"success"}\n' * 3
@@ -126,6 +150,14 @@ assert d.run_info(None, "") is None
 for name in ("raw-1.json", "raw-2.json", "raw-2.json.resume.json"):
     (tmp / name).write_text("{}\n")
 assert [f.name for f in d.raw_files()] == ["raw-1.json", "raw-2.json"]
+
+# Clear: the feed hides the places already in it; later places show, and the next run's file shows in full
+(tmp / "raw-2.json").write_text('{"title": "a"}\n{"title": "b"}\n')
+d.clear_feed()
+assert d.since_clear(d.live_rows(tmp / "raw-2.json"), "raw-2.json") == []
+(tmp / "raw-2.json").write_text('{"title": "a"}\n{"title": "b"}\n{"title": "c"}\n')
+assert d.since_clear(d.live_rows(tmp / "raw-2.json"), "raw-2.json") == [{"title": "c"}]
+assert len(d.since_clear([{}, {}], "raw-3.json")) == 2
 
 # a resumed run is judged by its own log lines: an old "unusual traffic" line must not mark every resume blocked
 d.save_state(run=saved, blocks={}, running=True)

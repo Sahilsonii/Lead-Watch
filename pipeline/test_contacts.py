@@ -102,4 +102,26 @@ assert c.owner_from_text("Zoë Anne Smith, Founder", "Smile Clinic")[0] == "Zoë
 assert c.owner_from_text("Chloë Grace Martin, CEO", "Smile Clinic")[0] == "Chloë Grace Martin"
 assert "Renée" in c.owner_from_text("Dr. Renée Marie Dubois - Owner", "Smile Clinic")[0]
 assert (c.owner_from_text("Mary McKenzie Ross, Founder", "Smile Clinic") or [None])[0] != "Kenzie Ross"
+
+# live pages with no name: what each one actually said
+tara = "Williams Referred Urban Realty Listing Agent Tara Lee Crooks Managing Partner & CEO of Getting It Done"
+assert c.owner_from_text(tara, "The Christine Cowern Real Estate Team") == ("Tara Lee Crooks", "Managing Partner")
+brel = "Sign Up Brendan Powell - Broker of Record/Owner Melanie Piche - Broker/Owner Office: 416-274-2068"
+assert c.owner_from_text(brel, "the BREL team East") == ("Brendan Powell & Melanie Piche", "Owner")
+assert c.owner_from_text("Ana Bo, Owner. Cyd Do, Owner. Eda Fu, Owner.", "X") is None  # three owners: unclear
+# a plain space before a title only counts for a capitalized senior title, never prose or a bare "director"
+assert c.owner_from_text("Property Management Overseas owner reporting", "District") is None
+assert c.owner_from_text("Lina Haddad Director of Marketing", "Smile") is None
+assert c.owner_from_text("Sara Ali Founder", "Smile") == ("Sara Ali", "Founder")
+# second live run: a heading word before the name is dropped; branch and badge text is no person
+assert c.owner_from_text("Staff Calum White - Founder", "White & Co") == ("Calum White", "Founder")
+assert c.owner_from_text("Directors Anita Mehra - Managing Director", "Benham") == ("Anita Mehra", "Managing Director")
+assert c.owner_from_text("Founders Hanane Dawson, Founder. Chris Dawson, Founder", "Dolce Vita") == \
+    ("Hanane Dawson & Chris Dawson", "Founder")
+assert c.owner_from_text("Business Bay Branch - CEO", "Provident") is None
+assert c.owner_from_text("Best Seller Owner", "GLP") is None
+# the "Dr" the site names is the one in the business name
+assert c.owner_in_business("Meet Dr Zeinab Taie and Dr. Ali Omar", "Dentist Zeinab Taie (Dubai - Marina)") == \
+    ("Dr Zeinab Taie", "Owner")
+assert c.owner_in_business("Dr Evelien Zijp, Dr Gina Rau", "Sky Clinic Dental Center") is None
 print("all checks passed")

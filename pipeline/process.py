@@ -15,11 +15,15 @@ import smtplib
 import socket
 import sqlite3
 import sys
+import time
 import uuid
 from pathlib import Path
 
 import dns.resolver
+import openpyxl
 import phonenumbers
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+from openpyxl.styles import Font
 from phonenumbers import PhoneNumberType as T
 
 import contacts
@@ -63,7 +67,9 @@ def db(path=None):
         "raw": "TEXT", "owner_name": "TEXT", "owner_role": "TEXT", "owner_source": "TEXT", "social_links": "TEXT",
         "site_status": "TEXT", "site_matches": "INTEGER", "enriched_at": "TEXT", "linkedin_url": "TEXT",
         "linkedin_checked_at": "TEXT", "sources": "TEXT DEFAULT 'google_maps'",
-        "lat": "REAL", "lon": "REAL", "phone_any": "TEXT", "domain": "TEXT"})  # cross-source match keys
+        "lat": "REAL", "lon": "REAL", "phone_any": "TEXT", "domain": "TEXT",  # cross-source match keys
+        "xlsx_batch": "TEXT",  # the run whose block in leads.xlsx holds this lead
+        "ch_checked_at": "TEXT", "ch_company": "TEXT"})  # Companies House lookup (UK leads), its company number
     if "lat" in added:  # leads from before matching: fill their keys from the stored Google data, once
         for place_id, phone, website, query, raw in con.execute(
                 "SELECT place_id, phone, website, query, raw FROM leads").fetchall():
@@ -361,12 +367,12 @@ def ingest(path, done_keys=()):
 
 def save_enrichment(con, place_id, res):
     """Store one website crawl result (enrich.crawl_site). Returns True when an owner name was stored."""
-    name, website, raw, phone, query = con.execute(
-        "SELECT name, website, raw, phone, query FROM leads WHERE place_id = ?", (place_id,)).fetchone()
+    name, website, raw, phone, query, stored_source = con.execute(
+        "SELECT name, website, raw, phone, query, owner_source FROM leads WHERE place_id = ?", (place_id,)).fetchone()
     maps_emails = json.loads(raw or "{}").get("emails") or []
     email, status = best_email(list(maps_emails) + list(res["emails"]), website)
     owner = res["owner"]
-    if owner and contacts.looks_like_company(owner[0], name or ""):
+    if owner and (contacts.looks_like_company(owner[0], name or "") or not outranks(owner[2], stored_source)):
         owner = None
     site_phone = None if phone or not res["phones"] else res["phones"][0]
     owner_sql = "owner_name = ?, owner_role = ?, owner_source = ?," if owner else ""  # never erase an earlier name
@@ -386,8 +392,14 @@ GOOD_EMAIL = {"smtp_ok", "catch_all", "mx_ok"}
 COLUMNS = ["Business Name", "Owner Name", "Owner Source", "Address/Location", "Postcode", "City", "Region",
            "Business Sector", "Category", "Phone", "Email", "WhatsApp", "Website", "Total Google Reviews",
            "Rating", "Short Brief", "Date Added", "Authenticity Verdict", "Social Links", "Sources"]
-OWNER_RANK = ["Website structured data", "Website team page", "Business name", "Website email link",
-              "LinkedIn search result", "Email address (guess)"]
+OWNER_RANK = ["Website structured data", "Website team page", "Companies House owner", "Business name",
+              "Companies House director", "Website email link", "LinkedIn search result", "Email address (guess)"]
+
+
+def outranks(source, stored):
+    """True when a name from `source` may replace the stored one: anything beats nothing, a newer read of an
+    equally good source replaces the older one, a weaker source never does (OWNER_RANK)."""
+    return stored not in OWNER_RANK or OWNER_RANK.index(source) <= OWNER_RANK.index(stored)
 GENERIC_MAILBOXES = {"info", "contact", "hello", "admin", "office", "sales", "support", "enquiries", "enquiry",
                      "inquiry", "inquiries", "booking", "bookings", "reception", "mail", "team", "help", "care",
                      "appointments", "appointment", "clinic", "marketing", "hr", "jobs", "careers", "accounts",
@@ -484,20 +496,79 @@ def dedupe_contacts(rows):
     return out
 
 
-def export():
-    con = db()
+def exportable(con):
+    """Leads with a verified email or a mobile (likely WhatsApp), both-channel leads first, one row per contact."""
     con.row_factory = sqlite3.Row
-    # Leads with a verified email or a mobile (likely WhatsApp); both-channel leads first.
-    rows = con.execute(f"""
+    return dedupe_contacts(con.execute(f"""
         SELECT * FROM leads WHERE {VERIFIED} OR phone_e164 IS NOT NULL
-        ORDER BY ({VERIFIED}) + (phone_e164 IS NOT NULL) DESC, reviews DESC""").fetchall()
-    rows = dedupe_contacts(rows)
+        ORDER BY ({VERIFIED}) + (phone_e164 IS NOT NULL) DESC, reviews DESC""").fetchall())
+
+
+def not_in_sheet(con):
+    """Exportable leads not yet in leads.xlsx. Leads already there go first in the dedupe, so a new listing of a
+    contact the sheet already has is never added again."""
+    con.row_factory = sqlite3.Row
+    rows = con.execute(f"SELECT * FROM leads WHERE {VERIFIED} OR phone_e164 IS NOT NULL "
+                       f"ORDER BY xlsx_batch IS NULL, ({VERIFIED}) + (phone_e164 IS NOT NULL) DESC, reviews DESC").fetchall()
+    return [r for r in dedupe_contacts(rows) if r["xlsx_batch"] is None]
+
+
+def export(batch=None, limit=None):
+    """Rewrite leads.csv (every lead) and add this run's new leads to leads.xlsx under the run's date and time.
+    batch: the run's start, "2026-11-20 04:05" (default: now). limit: at most this many new rows. Returns the
+    number of rows added to the sheet."""
+    con = db()
     with open(DATA / "leads.csv", "w", newline="", encoding="utf-8-sig") as f:  # BOM so Excel reads UTF-8
         w = csv.writer(f)
         w.writerow(COLUMNS)
-        w.writerows(lead_row(r) for r in rows)
+        w.writerows(lead_row(r) for r in exportable(con))
     (DATA / "ATTRIBUTION.txt").write_text(ATTRIBUTION, encoding="utf-8")  # travels with leads.csv
-    return len(rows)
+    batch = batch or time.strftime("%Y-%m-%d %H:%M")
+    new = not_in_sheet(con)[:limit]
+    started = con.execute("SELECT 1 FROM leads WHERE xlsx_batch = ? LIMIT 1", (batch,)).fetchone()
+    if not new or not append_xlsx(DATA / "leads.xlsx", None if started else batch, [lead_row(r) for r in new]):
+        return 0
+    con.executemany("UPDATE leads SET xlsx_batch = ? WHERE place_id = ?", [(batch, r["place_id"]) for r in new])
+    con.commit()
+    return len(new)
+
+
+def append_xlsx(path, heading, rows):
+    """Add rows to the Excel history: a bold column header once, then for each run its date and time, a blank row,
+    and its leads. heading None continues the current run's block. False when Excel has the file open (Windows
+    locks it): nothing is marked as written, so the next export adds these rows."""
+    if path.exists():
+        wb = openpyxl.load_workbook(path)
+        ws = wb.active
+    else:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Leads"
+        ws.append(COLUMNS)
+        for i, name in enumerate(COLUMNS, 1):
+            ws.cell(1, i).font = Font(bold=True)
+            ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = 14 if len(name) < 12 else 22
+        ws.freeze_panes = "A2"
+    if heading:
+        if ws.max_row > 1:
+            ws.append([None])  # a gap before the next run
+        ws.append([heading])
+        ws.cell(ws.max_row, 1).font = Font(bold=True)
+        ws.append([None])
+    for r in rows:
+        ws.append([ILLEGAL_CHARACTERS_RE.sub("", v) if isinstance(v, str) else v for v in r])
+        for c in ws[ws.max_row]:
+            if isinstance(c.value, str):
+                c.data_type = "s"  # web text starting with "=" stays text, never a live formula
+    ws.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(COLUMNS))}{ws.max_row}"
+    part = path.with_suffix(".part")
+    wb.save(part)
+    try:
+        part.replace(path)
+    except PermissionError:
+        part.unlink(missing_ok=True)
+        return False
+    return True
 
 
 ATTRIBUTION = """Data sources for leads.csv (see its Sources column)
@@ -518,6 +589,6 @@ if __name__ == "__main__":
     elif cmd == "ingest":
         print("new %d, duplicates %d" % ingest(sys.argv[2], [q.split(" #!#")[0] for q in lines("data/batch.txt")]))
     elif cmd == "export":
-        print(f"exported {export()} leads to data/leads.csv")
+        print(f"exported leads to data/leads.csv; {export()} new rows in data/leads.xlsx")
     else:
         sys.exit(__doc__)

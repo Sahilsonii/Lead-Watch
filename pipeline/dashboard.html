@@ -44,6 +44,7 @@
   @keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--signal-bg); } 70% { box-shadow: 0 0 0 8px transparent; } }
   @media (prefers-reduced-motion: reduce) { .live .dot { animation: none; } tr.new td { animation: none !important; } }
   .controls { margin-left: auto; display: flex; gap: 8px; }
+  .controls .stop-after { width: 150px; }
   button { font: 500 13px "IBM Plex Sans", sans-serif; border-radius: 7px; padding: 7px 14px; cursor: pointer;
     border: 1px solid var(--line); background: var(--well); color: var(--chalk); min-height: 34px; }
   button:hover:not(:disabled) { border-color: var(--dim); }
@@ -114,6 +115,7 @@
   .feed h2, .health h2 { font-size: 13px; font-weight: 600; margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--line);
     display: flex; justify-content: space-between; gap: 12px; }
   .feed h2 span { color: var(--faint); font-weight: 400; }
+  .feed h2 .clear-feed { float: right; margin: -4px 0; padding: 3px 10px; font-size: 12px; }
   .feed { overflow-x: auto; }  /* the wide table scrolls inside its card, never the page */
   table { width: 100%; border-collapse: collapse; min-width: 820px; }
   th { text-align: left; font-size: 11px; font-weight: 500; color: var(--faint); text-transform: uppercase;
@@ -155,6 +157,8 @@
     <span id="status" class="status" role="status"><span class="dot"></span><span id="status-text">Connecting…</span></span>
     <div class="controls">
       <button id="theme" class="theme" type="button"></button>
+      <input id="stop-after" class="stop-after" type="number" min="1" step="1" inputmode="numeric"
+        placeholder="Stop after … leads" aria-label="Stop after this many new leads (optional)">
       <button id="start" class="go" disabled>Start</button>
       <button id="stop" class="halt" disabled>Stop</button>
     </div>
@@ -216,16 +220,16 @@
           <div class="cell"><div class="label">OpenStreetMap</div><div class="val num" id="h-osm">–</div><div class="sub" id="h-osm-sub"></div></div>
           <div class="cell"><div class="label">Foursquare</div><div class="val num" id="h-fsq">–</div><div class="sub" id="h-fsq-sub"></div></div>
           <div class="cell"><div class="label">Overture Maps</div><div class="val num" id="h-ov">–</div><div class="sub" id="h-ov-sub"></div></div>
-          <div class="cell"><div class="label">LinkedIn names (Brave)</div><div class="val num" id="h-li">–</div><div class="sub" id="h-li-sub"></div></div>
+          <div class="cell"><div class="label">Owner names</div><div class="val num" id="h-li">–</div><div class="sub" id="h-li-sub"></div></div>
         </div>
         <div class="stopnote" id="h-stop" role="alert" hidden></div>
       </section>
 
       <section class="card feed">
-        <h2>Live feed <span id="feed-file"></span></h2>
+        <h2>Live feed <span id="feed-file"></span><button id="clear-feed" class="clear-feed" type="button">Clear</button></h2>
         <table>
-          <thead><tr><th>Business</th><th>Reach</th><th>Email</th><th>Phone</th><th>Rating</th></tr></thead>
-          <tbody id="rows"><tr><td colspan="5" class="empty">Press Start to begin scraping.</td></tr></tbody>
+          <thead><tr><th>Business</th><th>Owner</th><th>Reach</th><th>Email</th><th>Phone</th><th>Rating</th></tr></thead>
+          <tbody id="rows"><tr><td colspan="6" class="empty">Press Start to begin scraping.</td></tr></tbody>
         </table>
       </section>
     </div>
@@ -243,8 +247,9 @@
     done: "All searches done. Add sectors or locations to continue", stopping: "Stopping…", stopped: "Stopped",
     planning: "Planning the next run", "reading websites": "Reading business websites",
     "adding other sources": "Adding places from OpenStreetMap, Foursquare and Overture",
+    "searching Companies House": "Looking up UK owners in Companies House",
     "searching LinkedIn": "Looking up owners via Brave", exporting: "Writing leads.csv" };
-  const ACTIVE = new Set(["scraping", "verifying emails", "planning", "adding other sources", "reading websites", "searching LinkedIn", "exporting"]);
+  const ACTIVE = new Set(["scraping", "verifying emails", "planning", "adding other sources", "reading websites", "searching Companies House", "searching LinkedIn", "exporting"]);
   const RUN_CLASS = { ok: ["ok", "Clean run"], blocked: ["found", "Blocked"], error: ["", "Scraper error"] };
 
   function renderHealth(d) {
@@ -274,7 +279,7 @@
 
     $("h-sites").textContent = fmt(en.crawled);
     $("h-sites-sub").textContent = `${fmt(en.names)} owner names · ${fmt(en.blocked)} blocked`;
-    $("h-li").textContent = li.skipped ? "Off" : `${fmt(li.used)} / ${fmt(li.cap)}`;
+    $("h-li").textContent = fmt(d.owners.total);
     const src = d.sources, last = src.last || {}, o = last.osm || {}, f = last.foursquare || {}, v = last.overture || {};
     $("h-osm").textContent = fmt(src.osm);
     $("h-osm-sub").textContent = (o.skipped || (last.osm ? `leads · last cycle ${fmt(o.new)} new, ${fmt(o.merged)} matched` : "leads"))
@@ -284,7 +289,9 @@
       : f.skipped || (last.foursquare ? `leads · last cycle ${fmt(f.new)} new, ${fmt(f.merged)} matched` : "leads");
     $("h-ov").textContent = fmt(src.overture);
     $("h-ov-sub").textContent = v.skipped || (last.overture ? `leads · last cycle ${fmt(v.new)} new, ${fmt(v.merged)} matched` : "leads");
-    $("h-li-sub").textContent = li.skipped ? "Optional, and Brave's API needs a card on file" : "searches this month";
+    const chn = d.owners.companies_house;
+    $("h-li-sub").textContent = `Companies House: ${chn === null ? "off, needs its free key" : `${fmt(chn)} names`} · `
+      + `LinkedIn: ${li.skipped ? "off (Brave asks for a card)" : `${fmt(li.used)} / ${fmt(li.cap)} searches`}`;
   }
   let seen = null, locations = [], sectors = [], sectorOptions = [], loaded = false;
 
@@ -375,7 +382,12 @@
   showTheme();
 
   // ---- controls -----------------------------------------------------------
-  $("start").onclick = async () => { $("start").disabled = true; await post("/start"); tick(); };
+  $("start").onclick = async () => {
+    $("start").disabled = true;
+    await post("/start", { stop_after: parseInt($("stop-after").value, 10) || null });
+    tick();
+  };
+  $("clear-feed").onclick = async () => { await post("/clear-feed"); tick(); };
   $("stop").onclick = async () => { $("stop").disabled = true; await post("/stop"); tick(); };
 
   // ---- pips ---------------------------------------------------------------
@@ -430,11 +442,12 @@
       <tr class="${seen && !seen.has(r.link) ? "new" : ""} ${r.dup ? "dup" : ""}">
         <td><div class="name"><a href="${esc(r.link)}" target="_blank" rel="noopener">${esc(r.name)}</a></div>
             <div class="cat">${esc(r.category)} · ${esc(country(r.cc))}</div></td>
+        <td>${r.owner ? `<div>${esc(r.owner)}</div><div class="cat">${esc(r.owner_source)}</div>` : '<span class="muted">—</span>'}</td>
         <td><div class="reach">${r.dup ? `<span class="pip">Already saved</span>` : ""}${emailPip(r)}${phonePip(r)}</div></td>
         <td class="m">${r.email ? esc(r.email) : r.emails.length ? esc(r.emails[0]) : '<span class="muted">—</span>'}</td>
         <td class="m">${esc(r.phone) || '<span class="muted">—</span>'}</td>
         <td class="m">${r.rating ? `${r.rating} <span class="muted">(${fmt(r.reviews)})</span>` : '<span class="muted">—</span>'}</td>
-      </tr>`).join("") : `<tr><td colspan="5" class="empty">${d.running ? "Waiting for the first places…" : "Press Start to begin scraping."}</td></tr>`;
+      </tr>`).join("") : `<tr><td colspan="6" class="empty">${d.run_places ? "Feed cleared. New places show here as they come in." : d.running ? "Waiting for the first places…" : "Press Start to begin scraping."}</td></tr>`;
     seen = now;
   }
   tick();

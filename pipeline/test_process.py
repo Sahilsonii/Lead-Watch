@@ -88,6 +88,37 @@ assert p.COLUMNS[:18] == ["Business Name", "Owner Name", "Owner Source", "Addres
                           "Total Google Reviews", "Rating", "Short Brief", "Date Added", "Authenticity Verdict"]
 cols = dict(zip(p.COLUMNS, row))
 a_row = dict(zip(p.COLUMNS, p.lead_row(con.execute("SELECT * FROM leads WHERE place_id='a'").fetchone())))
+
+# the Excel history: the column header once, then per run its date and time, a blank row and its new leads
+import openpyxl
+import tempfile
+from pathlib import Path
+p.DATA = Path(tempfile.mkdtemp())  # never the real data/ folder
+xlsx = p.DATA / "check.xlsx"
+blank = [""] * (len(p.COLUMNS) - 2)
+assert p.append_xlsx(xlsx, "2026-11-20 04:05", [["=HYPERLINK(\"http://x\")", 4.5] + blank])
+assert p.append_xlsx(xlsx, None, [["Second", 1] + blank])  # same run: its block goes on
+assert p.append_xlsx(xlsx, "2026-11-20 09:00", [["Third", 2] + blank])
+sheet = openpyxl.load_workbook(xlsx).active
+assert [c.value for c in sheet[1]] == p.COLUMNS and sheet.freeze_panes == "A2"
+assert [sheet.cell(r, 1).value for r in range(2, 10)] ==     ["2026-11-20 04:05", None, '=HYPERLINK("http://x")', "Second", None, "2026-11-20 09:00", None, "Third"]
+assert sheet["A4"].data_type == "s" and sheet["B4"].value == 4.5  # web text never becomes a live formula
+
+# export: every lead goes to the CSV; the sheet gets each lead once, at most `limit` per call, the rest next time
+disk = p.db()  # export opens DATA/leads.db: copy this test's leads there
+for r in con.execute("SELECT * FROM leads").fetchall():
+    disk.execute(f"INSERT INTO leads({', '.join(r.keys())}) VALUES ({', '.join('?' * len(r))})", tuple(r))
+disk.execute("INSERT INTO leads(place_id, name, phone, phone_e164, query, raw) VALUES "
+             "('z', 'Zed Clinic', '+971 50 765 4321', '+971507654321', 'AE|dentist|Dubai', '{}')")
+disk.commit()
+waiting = len(p.not_in_sheet(disk))
+assert waiting >= 2, waiting
+assert p.export("2026-11-20 10:00", limit=1) == 1 and len(p.not_in_sheet(disk)) == waiting - 1
+assert p.export("2026-11-20 10:00") == waiting - 1 and not p.not_in_sheet(disk)
+assert p.export("2026-11-20 11:00") == 0  # nothing new: no empty block for this run
+sheet = openpyxl.load_workbook(p.DATA / "leads.xlsx").active
+assert [sheet.cell(r, 1).value for r in range(2, 4)] == ["2026-11-20 10:00", None]
+assert sheet.max_row == 3 + waiting and "2026-11-20 11:00" not in [c.value for c in sheet["A"]]
 assert a_row["Phone"] == "+971 50 123 4567" and a_row["WhatsApp"] == "+971 50 123 4567", a_row
 assert cols["Website"] == "" and "https://www.facebook.com/smile" in cols["Social Links"] and cols["Sources"] == "google_maps"
 con.row_factory = None
@@ -104,6 +135,10 @@ stats = asyncio.run(enrich.enrich_pending(con, 10, threading.Event()))
 assert stats == {"crawled": 2, "names": 2, "blocked": 0}, stats
 assert con.execute("SELECT COUNT(*) FROM leads WHERE enriched_at IS NULL").fetchone()[0] == 0
 assert asyncio.run(enrich.enrich_pending(con, 10, threading.Event()))["crawled"] == 0  # each site crawled once
+# a later, weaker name never replaces a stronger one
+assert not p.save_enrichment(con, "a", {**found, "owner": ("Info Desk", None, "Website email link"), "phones": []})
+assert con.execute("SELECT owner_name FROM leads WHERE place_id = 'a'").fetchone()[0] == "Sara Ali"
+assert p.outranks("Companies House owner", None) and not p.outranks("Email address (guess)", "Business name")
 
 # a chain: two leads on one website -> the site is read once, both leads get the result
 con.execute("UPDATE leads SET enriched_at = NULL, website = 'https://smile.ae'")

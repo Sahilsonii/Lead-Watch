@@ -4,7 +4,7 @@
 
 **Google Maps + OpenStreetMap + Overture Maps + Foursquare → verified, deduplicated business leads, 24/7.**
 
-Pick sectors and locations, press **Start**, and Lead Watch scrapes Google Maps, adds free open-data places from OpenStreetMap and Overture Maps (and Foursquare, once you sign up), reads each business's own website for contacts and owner names, verifies emails, and exports clean leads to `data/leads.csv`.
+Pick sectors and locations, press **Start**, and Lead Watch scrapes Google Maps, adds free open-data places from OpenStreetMap and Overture Maps (and Foursquare, once you sign up), reads each business's own website for contacts and owner names, verifies emails, and exports clean leads to `data/leads.csv` and `data/leads.xlsx`.
 
 ![Python](https://img.shields.io/badge/python-3-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/needs-Docker-2496ED?logo=docker&logoColor=white)
@@ -28,7 +28,7 @@ python -m venv .venv; .venv\Scripts\pip install -r requirements.txt
 .venv\Scripts\python pipeline\dashboard.py
 ```
 
-Open **http://localhost:8765**, pick sectors and locations, press **Save targets**, then **Start**.
+Open **http://localhost:8765**, pick sectors and locations, press **Save targets**, then **Start**. To try a small run first, type a number in **Stop after … leads** (for example 5) before pressing Start: the run stops once that many new leads are in.
 
 <details>
 <summary>🐧 On macOS / Linux</summary>
@@ -55,7 +55,7 @@ flowchart LR
     C -- no --> S["🧭 Add places from<br/>OpenStreetMap, Overture,<br/>Foursquare, matched to<br/>existing leads"]
     P --> S
     S --> D["🌐 Read business websites<br/>robots.txt first, max 4 pages"]
-    D --> E["🔎 Owner names via<br/>Brave Search, optional"]
+    D --> E["🔎 Owner names via<br/>Companies House (UK),<br/>Brave Search, optional"]
     E --> F["✅ Verify, dedupe, score<br/>export data/leads.csv"]
     F --> R["😴 Rest PAUSE_MIN"]
     R --> A
@@ -69,7 +69,7 @@ flowchart LR
 3. **Check** whether Google is blocking the IP, and back off if so ([details](#-when-google-blocks)).
 4. **Add** places from OpenStreetMap, Foursquare and Overture Maps for the same sectors and locations ([other sources](#-other-sources)). This runs even while Google is blocking, because it uses other hosts.
 5. **Read** up to 300 business websites politely: robots.txt first, one page at a time per site, 1–2 s apart, at most 4 pages each (home, contact, about, team).
-6. **Look up** missing owner names through Brave Search, if you turned it on ([LinkedIn names](#-linkedin-names-optional)).
+6. **Look up** missing owner names: UK businesses in Companies House ([UK owner names](#-uk-owner-names-companies-house)), then Brave Search if you turned it on ([LinkedIn names](#-linkedin-names-optional)).
 7. **Export** every lead with a verified email or a mobile number, best leads first.
 
 </details>
@@ -117,14 +117,14 @@ Place data comes from [GeoNames](https://www.geonames.org/) (CC BY 4.0), downloa
 
 ## 📦 What you get
 
-`data/leads.csv` with 20 columns:
+`data/leads.csv` (every lead, rewritten each cycle) and `data/leads.xlsx` (a running history: each time you press Start, the date and time, a blank row, then the leads that run added, so each lead appears once) with 20 columns:
 
 > Business Name · Owner Name · Owner Source · Address/Location · Postcode · City · Region · Business Sector · Category · Phone · Email · WhatsApp · Website · Total Google Reviews · Rating · Short Brief · Date Added · Authenticity Verdict · Social Links · Sources
 
 <details>
 <summary><b>What each tricky column means</b></summary>
 
-- **Owner Name** is best effort. **Owner Source** says where it came from, best first: Website structured data, Website team page, Business name ("Dr. …"), Website email link (a named mailto link), LinkedIn search result, Email address (guess), or Not found. Company-looking names ("SMILE DENTAL LTD") are never used as owners.
+- **Owner Name** is best effort. **Owner Source** says where it came from, best first: Website structured data, Website team page, Companies House owner (UK, over 25% of the company), Business name ("Dr. …", or a doctor the site names who is also in the business name), Companies House director (UK, companies with at most 2 directors), Website email link (a named mailto link), LinkedIn search result, Email address (guess), or Not found. A weaker source never replaces a stronger one. Two owners or founders listed side by side are both kept ("Brendan Powell & Melanie Piche"). Company-looking names ("SMILE DENTAL LTD") are never used as owners.
 - **Phone** and **WhatsApp** use each country's standard grouping with the country code (`+971 4 566 2262`, `+44 20 7946 0958`, `+1 416-555-0199`), however Google wrote them. A number that can't be parsed is left as it was.
 - **WhatsApp** is the mobile number. It is likely on WhatsApp but not checked. It keeps its spaces for reading; strip them and the `+` for a `wa.me/` link: `+971 50 123 4567` → `wa.me/971501234567`.
 - **Website** is empty when the Maps "website" is really a Facebook, Instagram or directory page; that link moves to **Social Links**, with the Instagram, Facebook, LinkedIn and other profiles found on the site.
@@ -180,6 +180,8 @@ Set these as environment variables before starting the dashboard.
 | `HF_TOKEN` | (none) | Turns on Foursquare (see [other sources](#-other-sources)) |
 | `FSQ_PER_CYCLE` | 20 | Foursquare reads per cycle |
 | `OVERTURE_PER_CYCLE` | 20 | Overture Maps reads per cycle |
+| `COMPANIES_HOUSE_KEY` | (none) | Turns on UK owner names from Companies House (free key, no card) |
+| `CH_PER_CYCLE` | 100 | UK leads looked up in Companies House per cycle |
 | `BRAVE_API_KEY` | (none) | Turns on LinkedIn name lookups (Brave asks for a card) |
 | `BRAVE_MONTHLY_CAP` | 1000 | Hard cap on Brave searches per month |
 | `SMTP_CHECK` | off | `1` adds an SMTP mailbox check |
@@ -234,6 +236,23 @@ The first read of a country copies that country's open places (out of an ~11.6 G
 **Tripadvisor is not used.** A single polite request on 2026-11-20 got a 403 with a DataDome bot check, and Lead Watch never tries to pass bot checks (the same reason Yelp and Yellow Pages are out).
 
 `data/ATTRIBUTION.txt` is written next to `leads.csv` with the credits these licenses require.
+
+</details>
+
+### 🇬🇧 UK owner names (Companies House)
+
+<details>
+<summary><b>How it works and how to turn it on</b></summary>
+
+Companies House is the UK's official company register. Its API is free and needs no card. For each UK lead with no better owner name, Lead Watch searches the register by business name and takes the **one active company** whose legal name fits ("Marsh & Parsons London Bridge Estate Agents" → MARSH & PARSONS LIMITED). When two companies fit, or the name is a single word with no matching postcode, the lead gets no name rather than a stranger's. The company number is kept in the `ch_company` column so any match can be checked.
+
+From that company it takes the people holding over 25% of it (Owner), or else its directors when there are at most two (Director); bigger firms' directors are not the local owner, so they are skipped. Each lead is looked up once, at most 3 calls, spaced to stay under the register's 600 calls per 5 minutes.
+
+To turn it on:
+
+- [ ] Create a free account at https://developer.company-information.service.gov.uk/ and register an application with a **REST API key**.
+- [ ] Save the key as a user environment variable, never in a file: `[Environment]::SetEnvironmentVariable("COMPANIES_HOUSE_KEY", "...", "User")`, then restart the dashboard.
+- [ ] Check one business by hand: `python pipeline/companies_house.py "Business Name"` lists what the register has and which company Lead Watch would pick.
 
 </details>
 
@@ -305,7 +324,7 @@ Each test is a plain Python script with asserts, no test runner needed.
 
 ```powershell
 cd pipeline
-foreach ($t in "process","merge","osm","fsq","overture","grid","geo","dashboard","backoff","contacts","enrich","linkedin") { ..\.venv\Scripts\python "test_$t.py" }
+foreach ($t in "process","merge","osm","fsq","overture","grid","geo","dashboard","backoff","contacts","enrich","companies_house","linkedin") { ..\.venv\Scripts\python "test_$t.py" }
 ```
 
 <details>
@@ -322,6 +341,7 @@ pipeline/
   osm.py                 OpenStreetMap places through the Overpass API
   fsq.py                 Foursquare Open Source Places (optional, read with DuckDB)
   overture.py            Overture Maps places (read with DuckDB from the public bucket)
+  companies_house.py     UK owner names from the Companies House register (optional, free key)
   linkedin.py            optional owner names via Brave Search
   process.py             lead database: ingest, cross-source matching, verify emails, dedupe, CSV export
   test_*.py              one assert-based test script per module

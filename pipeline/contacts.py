@@ -85,7 +85,12 @@ NOT_NAME_WORDS = {"our", "the", "team", "meet", "about", "contact", "us", "email
                   # job titles read as names ("General Dentist", "Managing Partner")
                   "general", "principal", "senior", "junior", "associate", "consultant", "specialist", "dentist",
                   "dentists", "orthodontist", "hygienist", "surgeon", "doctor", "manager", "assistant", "managing",
-                  "partner", "owner", "ceo", "co-founder", "broker", "realtor", "agent", "agents"}
+                  "partner", "owner", "ceo", "co-founder", "broker", "realtor", "agent", "agents",
+                  # page buttons run into the name before them ("Sign Up Brendan Powell")
+                  "sign", "up", "log", "login", "menu", "learn", "more", "view", "read", "listing", "listings",
+                  # second live run: team headings before a name, branch and badge text read as people
+                  "staff", "founders", "directors", "partners", "owners", "branch", "bay", "business", "seller",
+                  "sellers", "best", "sales", "lettings", "award", "winning"}
 
 
 def looks_like_company(name, business):
@@ -164,8 +169,10 @@ def phones_in(page, region):
 
 # --- owners ------------------------------------------------------------------------------------------
 # (pattern, display role, rank): lower rank wins
-ROLE_TABLE = [(r"co-?founder", "Co-Founder", 0), (r"founder", "Founder", 0), (r"owner", "Owner", 0),
-              (r"managing director", "Managing Director", 1), (r"chief executive officer|ceo", "CEO", 1),
+ROLE_TABLE = [(r"(?:broker(?: of record)?\s*/\s*)?owner", "Owner", 0), (r"co-?founder", "Co-Founder", 0),
+              (r"founder", "Founder", 0), (r"proprietor", "Proprietor", 0),
+              (r"managing director", "Managing Director", 1), (r"managing partner", "Managing Partner", 1),
+              (r"chief executive officer|ceo", "CEO", 1), (r"broker of record", "Broker of Record", 1),
               (r"principal", "Principal", 2), (r"director", "Director", 3), (r"partner", "Partner", 3)]
 ROLES = tuple(r for _, r, _ in ROLE_TABLE)
 ROLE_ALT = "|".join(p for p, _, _ in ROLE_TABLE)
@@ -231,21 +238,45 @@ NAME = r"(?<![\w'’-])((?:Dr\.?\s+)?[A-ZÀ-ÖØ-Þ][a-zß-öø-ÿ'’-]{1,30}(?
 SEP = r"\s*[,:|\u2013\u2014-]\s*"
 NAME_ROLE_RE = re.compile(NAME + SEP + rf"(?:our\s+|the\s+)?(?i:({ROLE_ALT}))\b")
 ROLE_NAME_RE = re.compile(rf"(?i:\b({ROLE_ALT}))" + SEP + NAME)
+# team cards put the title on its own line ("Tara Lee Crooks / Managing Partner"), which reads as a plain space;
+# only a capitalized senior title counts there, so prose ("overseas owner") and "Director of Marketing" never do
+NAME_TITLE_RE = re.compile(NAME + r"\s+(Owner|Co-Founder|Founder|Proprietor|CEO|Managing Director|Managing Partner|"
+                                  r"Principal|Broker of Record)\b")
 
 
 def owner_from_text(text, business):
-    """(name, role) next to a role word on a team/about page; None when the top role is shared (ambiguous)."""
+    """(name, role) next to a role word on a team/about page. Two owners or founders are both kept ("A & B");
+    any other shared top role is ambiguous and gives None."""
     found = {}
-    pairs = [(n, r) for n, r in NAME_ROLE_RE.findall(text or "")] + [(n, r) for r, n in ROLE_NAME_RE.findall(text or "")]
-    for name, role_text in pairs:
-        name = clean_person(name, business)
+    text = text or ""
+    pairs = NAME_ROLE_RE.findall(text) + [(n, r) for r, n in ROLE_NAME_RE.findall(text)] + NAME_TITLE_RE.findall(text)
+    for raw, role_text in pairs:
+        name = clean_person(raw, business) or clean_person(" ".join(raw.split()[1:]), business)
         role = role_of(role_text)
         if name and role:
             found.setdefault(role[1], {}).setdefault(name, role[0])
     if not found:
         return None
-    top = found[min(found)]
-    return next(iter(top.items())) if len(top) == 1 else None
+    rank = min(found)
+    top = found[rank]
+    if len(top) == 1:
+        return next(iter(top.items()))
+    if rank == 0 and len(top) == 2:  # co-owners: a brokerage's two Broker/Owners, a clinic's two founders
+        return " & ".join(top), next(iter(top.values()))
+    return None
+
+
+DR_NAME_RE = re.compile(r"\bDr\.?\s+([A-ZÀ-ÖØ-Þ][a-zß-öø-ÿ'’-]{1,30}(?:\s+[A-ZÀ-ÖØ-Þ][a-zß-öø-ÿ'’-]{1,30}){1,2})")
+
+
+def owner_in_business(text, business):
+    """The one doctor the site names whose name is part of the business name ("Dentist Zeinab Taie")."""
+    biz = f" {norm(business)} "
+    names = set()
+    for m in DR_NAME_RE.findall(text or ""):
+        words = m.split()
+        names |= {" ".join(words[:k]) for k in {2, len(words)} if f" {norm(' '.join(words[:k]))} " in biz}
+    return (f"Dr {names.pop()}", "Owner") if len(names) == 1 else None
 
 
 # --- links -------------------------------------------------------------------------------------------

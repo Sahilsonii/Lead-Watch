@@ -39,11 +39,25 @@ Kept up to date after every step, so the work can continue from any account or s
 - `data/ATTRIBUTION.txt` is written next to `leads.csv` (OpenStreetMap ODbL, Foursquare Apache 2.0, Overture CDLA Permissive 2.0, GeoNames CC BY).
 
 ### Changed
+- **Excel history** (Sahil: "always add date time then space then fill, then again date time when I resume"): every export also adds to `data/leads.xlsx`, a bold column header once, then for each Start its date and time, a blank row, and the leads that run added (each lead once; a new listing of a contact already in the sheet is skipped). Text that looks like a formula stays text. While the file is open in Excel, the sheet update waits for the next export. `leads.csv` stays the full list. New `xlsx_batch` column; `openpyxl` added to `requirements.txt`.
+- **More owner names** (Sahil: "I want to find every owner name possible"). Re-reading the 117 already-read websites on a copy of the database found **29 names, up from 6**. What the missed pages said, and the fix for each:
+  - "Tara Lee Crooks Managing Partner & CEO" (title on its own line, no comma): a plain space before a capitalized senior title now counts (Owner, Founder, CEO, Managing Director, Managing Partner, Principal, Broker of Record); a bare "Director" or lower-case prose ("overseas owner") still does not.
+  - "Brendan Powell - Broker of Record/Owner · Melanie Piche - Broker/Owner": "…/Owner" reads as Owner, and two owners or founders are both kept ("A & B"); three or more stay ambiguous.
+  - "Dr Zeinab Taie" on the site of "Dentist Zeinab Taie (Dubai - Marina)": a doctor the site names whose name is in the business name is the owner (source "Business name").
+  - Heading words before a name ("Staff Calum White", "Directors Anita Mehra") are dropped; branch and badge text ("Business Bay Branch", "Best Seller") is never a person.
+- **UK owner names from Companies House** (`pipeline/companies_house.py`, free key, no card): one active company per lead or none, then its owners (over 25%) or the directors of a company with at most two. Tested against canned answers only; it has **not run against the live register yet** (needs Sahil's `COMPANIES_HOUSE_KEY`). New `ch_checked_at`, `ch_company` columns.
+- **Owner names never get worse:** every writer (website reading, Companies House, LinkedIn) replaces a stored name only with one from an equally good or better source (`OWNER_RANK`).
+- **Live feed:** an Owner column (name and where it came from), and a **Clear** button that hides the places already shown; new places keep appearing, the next run shows in full, and no lead is deleted. The status cell "LinkedIn names (Brave)" is now "Owner names": the total, with Companies House and LinkedIn status under it.
+- **Stop after N new leads:** an optional box next to Start. The run stops after the step that reaches N (Google, then the other sources, then website reading) and puts exactly N into its Excel block; any extra leads stay in the database for the next block.
 - **Dashboard on narrow windows:** below about 840 px the whole page scrolled sideways, because the single-column layout could not shrink below the live-feed table's 820 px. The column now shrinks and the table scrolls inside its own card (checked at 732 px and on a 375 px phone).
 - **Matching:** a shared website never joins two places whose phones differ (one hotel brand, one booking platform). WhatsApp, Telegram, Snapchat, short links (bit.ly, goo.gl, g.co, share.google), Google Sites and booking or listing sites (Talabat, Zomato, ChatFood, SevenRooms, Fresha, auto.ae, Parkopedia, Wikipedia) no longer count as a business's website, for matching or for crawling.
 - **Sources column** lists every source that found a lead (`google_maps osm`).
 - **LinkedIn box** says Brave's API needs a card, instead of only "add BRAVE_API_KEY".
 - **Sector dropdown.** In "What to scrape", the country comes first; once one is chosen, a **Sectors** dropdown appears with the general sectors from `sectors.txt` (edit that file to change the list). Picking one adds it as a removable chip and greys it out in the list; "Or type your own" still takes any sector. Every sector is still searched in every location.
+
+### Fixed
+
+- "Stop after 5" while `leads.xlsx` was open in Excel said "Stopped after 0 new leads". It now says the sheet is open in Excel and that the new leads are kept for the next Start.
 
 ### Fixed (deferred review items)
 - Email MX lookups no longer run inside the website reader's event loop, so one slow DNS answer cannot stall other sites.

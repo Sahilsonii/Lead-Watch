@@ -5,7 +5,8 @@ Knobs (env): CONCURRENCY (2), PAUSE_MIN (rest between cycles, 30), DEPTH (scroll
 GRID_CELL_KM (4), ENRICH_PER_CYCLE (websites read per cycle, 300), LINKEDIN_PER_CYCLE (Brave searches, 30),
 BRAVE_API_KEY (optional; enables LinkedIn names), BRAVE_MONTHLY_CAP (1000), OSM_PER_CYCLE (Overpass queries, 20),
 FSQ_PER_CYCLE (Foursquare reads, 20), HF_TOKEN (optional; enables Foursquare after its free Hugging Face sign-up),
-OVERTURE_PER_CYCLE (Overture Maps reads, 20; free, no account).
+OVERTURE_PER_CYCLE (Overture Maps reads, 20; free, no account), COMPANIES_HOUSE_KEY (optional; UK owner names
+from the free Companies House API), CH_PER_CYCLE (UK leads looked up, 100).
 """
 import asyncio
 import json
@@ -27,6 +28,7 @@ import fsq
 import overture
 import geo
 import grid
+import companies_house
 import linkedin
 import osm
 import process as p
@@ -41,6 +43,7 @@ MAX_RESUMES = 2  # a run that keeps crashing is dropped; its searches stay queue
 PAUSE_MIN = float(os.environ.get("PAUSE_MIN", 30))
 ENRICH_PER_CYCLE = int(os.environ.get("ENRICH_PER_CYCLE", 300))
 LINKEDIN_PER_CYCLE = int(os.environ.get("LINKEDIN_PER_CYCLE", 30))
+CH_PER_CYCLE = int(os.environ.get("CH_PER_CYCLE", 100))  # UK leads looked up in Companies House (~3 calls each)
 OSM_PER_CYCLE = int(os.environ.get("OSM_PER_CYCLE", 20))
 FSQ_PER_CYCLE = int(os.environ.get("FSQ_PER_CYCLE", 20))
 OVERTURE_PER_CYCLE = int(os.environ.get("OVERTURE_PER_CYCLE", 20))  # spreads the monthly Brave credit over many cycles
@@ -89,10 +92,13 @@ class Runner:
         self.phase = "stopped"
         self.known_at_start = set()
         self.sources = {}  # last cycle's OpenStreetMap and Foursquare results, for the dashboard
+        self.batch, self.limit, self.written = None, None, 0  # this Start's block in leads.xlsx
 
-    def start(self):
+    def start(self, limit=None):
+        """limit: stop once this many new leads are in (the sheet's block for this run holds exactly that many)."""
         if self.thread and self.thread.is_alive():
             return
+        self.batch, self.limit, self.written = time.strftime("%Y-%m-%d %H:%M"), limit, 0
         self.stop.clear()
         save_state(running=True)
         self.thread = threading.Thread(target=self.loop, daemon=True)
@@ -121,6 +127,8 @@ class Runner:
                                               "resumes": 0, "depth": DEPTH, "concurrency": CONCURRENCY})["run"]
                 if run:
                     self.scrape_once(run, resume)
+                    if self.at_limit(p.db()):
+                        continue
                     wait = load_state().get("blocks", {}).get("google", {}).get("pause_min", PAUSE_MIN) * 60
                 else:
                     self.phase = "done"  # every sector x location searched; re-check for new targets often
@@ -132,8 +140,20 @@ class Runner:
                 self.phase = "error, trying again after the pause (see data/runner.log)"
                 wait = PAUSE_MIN * 60
             self.stop.wait(wait)
-        if self.phase != backoff.STOP_MESSAGE:
+        if self.phase != backoff.STOP_MESSAGE and not self.phase.startswith("Stopped"):
             self.phase = "stopped"
+
+    def at_limit(self, con):
+        """With a limit set: once enough new leads wait for the sheet, export them now and stop."""
+        if not self.limit or self.written + len(p.not_in_sheet(con)) < self.limit:
+            return False
+        self.phase = "exporting"
+        self.written += p.export(self.batch, self.limit - self.written)
+        save_state(running=False)
+        self.stop.set()
+        self.phase = (f"Stopped after {self.written} new leads" if self.written >= self.limit else
+                      "Stopped: leads.xlsx is open in Excel. Close it and press Start; the new leads are kept")
+        return True
 
     def scrape_once(self, run, resume):
         out = p.DATA / run["results"]
@@ -188,14 +208,22 @@ class Runner:
                             "foursquare": fsq.run_pending(con, client, FSQ_PER_CYCLE, self.stop),
                             "overture": overture.run_pending(con, client, OVERTURE_PER_CYCLE, self.stop)}
         added = any(s.get("new") or s.get("merged") for s in self.sources.values())
+        if self.at_limit(con):
+            return
         self.phase = "reading websites"
         crawled = asyncio.run(enrich.enrich_pending(con, ENRICH_PER_CYCLE, self.stop)).get("crawled")
+        self.phase = "searching Companies House"
+        with httpx.Client(base_url=companies_house.API) as client:
+            registered = companies_house.lookup_pending(con, client, CH_PER_CYCLE, self.stop,
+                                                        os.environ.get("COMPANIES_HOUSE_KEY")).get("looked_up")
         self.phase = "searching LinkedIn"
         with httpx.Client() as client:
             looked_up = linkedin.lookup_pending(con, client, LINKEDIN_PER_CYCLE, self.stop).get("looked_up")
-        if scraped or added or crawled or looked_up:
+        if scraped or added or crawled or registered or looked_up:
             self.phase = "exporting"
-            p.export()
+            self.written += p.export(self.batch, self.limit and self.limit - self.written)
+            if self.at_limit(con):
+                return
         if self.phase != backoff.STOP_MESSAGE:
             self.phase = after
 
@@ -235,6 +263,18 @@ def live_rows(path):
     return rows
 
 
+def clear_feed():
+    """Hide the places the feed shows now; the saved leads are untouched."""
+    raws = raw_files()
+    if raws:
+        save_state(feed_cleared={"file": raws[-1].name, "n": len(live_rows(raws[-1]))})
+
+
+def since_clear(rows, name):
+    cleared = load_state().get("feed_cleared") or {}
+    return rows[cleared["n"]:] if cleared.get("file") == name else rows
+
+
 def targets():
     locs = [l.rsplit(",", 1) for l in p.lines("cities.txt")] if (p.ROOT / "cities.txt").exists() else []
     return {"sectors": p.lines("niches.txt") if (p.ROOT / "niches.txt").exists() else [],
@@ -255,22 +295,23 @@ def save_targets(body):
 def stats():
     con = p.db()
     one = lambda sql: con.execute(sql).fetchone()[0]
-    known = {r[0]: r[1:] for r in con.execute("SELECT place_id, email, email_status FROM leads")}
+    known = {r[0]: r[1:] for r in con.execute("SELECT place_id, email, email_status, owner_name, owner_source FROM leads")}
     raws = raw_files()
     current = live_rows(raws[-1]) if raws else []
     searches_done, searches_total = grid.progress(con)
     log = p.DATA / "scraper.log"
     feed = []
-    for e in reversed(current[-60:]):
+    for e in reversed(since_clear(current, raws[-1].name)[-60:] if raws else []):
         key = e.get("place_id") or e.get("data_id") or e.get("link")
-        email, status = known.get(key, (None, None))
+        email, status, owner_name, owner_source = known.get(key, (None,) * 4)
+        owner = p.lead_owner(e, {"email": email, "owner_name": owner_name, "owner_source": owner_source})
         cc, sector, _ = p.split_input(e.get("input_id"))
         feed.append({
             "name": e.get("title"), "category": e.get("category"), "cc": cc, "sector": sector,
             "phone": p.pretty_phone(e.get("phone"), cc), "emails": e.get("emails") or [], "link": e.get("link"),
             "rating": e.get("review_rating"), "reviews": e.get("review_count"),
             "mobile": p.to_e164(e.get("phone"), cc),
-            "email": email, "email_status": status,
+            "email": email, "email_status": status, "owner": owner[0], "owner_source": owner[0] and owner[1],
             "dup": runner.phase == "scraping" and key in runner.known_at_start,
         })
     state = load_state()
@@ -285,6 +326,9 @@ def stats():
                    "names": one("SELECT COUNT(*) FROM leads WHERE owner_source LIKE 'Website%'"),
                    "blocked": one("SELECT COUNT(*) FROM leads WHERE site_status = 'blocked'")},
         "linkedin": {"used": used, "cap": cap} if os.environ.get("BRAVE_API_KEY") else {"skipped": "no BRAVE_API_KEY"},
+        "owners": {"total": one("SELECT COUNT(*) FROM leads WHERE owner_name IS NOT NULL"),
+                   "companies_house": one("SELECT COUNT(*) FROM leads WHERE owner_source LIKE 'Companies House%'")
+                   if os.environ.get("COMPANIES_HOUSE_KEY") else None},
         "sources": {"osm": one("SELECT COUNT(*) FROM leads WHERE instr(sources, 'osm')"),
                     "foursquare": one("SELECT COUNT(*) FROM leads WHERE instr(sources, 'foursquare')"),
                     "overture": one("SELECT COUNT(*) FROM leads WHERE instr(sources, 'overture')"),
@@ -338,11 +382,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(b'{"error":"forbidden"}', code=403)
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
         if self.path == "/start":
-            runner.start()
+            n = body.get("stop_after")
+            runner.start(n if isinstance(n, int) and n > 0 else None)
         elif self.path == "/stop":
             threading.Thread(target=runner.halt, daemon=True).start()  # docker stop takes a few seconds
         elif self.path == "/targets":
             save_targets(body)
+        elif self.path == "/clear-feed":
+            clear_feed()
         else:
             return self.send(b'{"error":"not found"}', code=404)
         self.send(b'{"ok":true}')

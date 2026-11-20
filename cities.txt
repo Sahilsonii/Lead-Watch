@@ -1,5 +1,5 @@
-Dubai,AE
-London,GB
-Mumbai,IN
-Toronto,CA
-Riyadh,SA
+*,AE
+*,GB
+*,IN
+*,CA
+*,SA
