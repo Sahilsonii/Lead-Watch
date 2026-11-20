@@ -23,10 +23,12 @@ Kept up to date after every step, so the work can continue from any account or s
 - **Next:** run the 24/7 dashboard with `HF_TOKEN` set and watch one full cycle.
 - 2026-11-20 18:50 IST, Sahil asked to add Trustpilot. Re-checked and **not added**: its robots.txt says `User-agent: *` / `Disallow: /` (only ~40 named bots such as Googlebot may crawl), and one polite category-page request got a 403 with an AWS WAF bot check. Both are hard stops under the robots.txt and no-bypass rules.
 - Not included unless asked: a "new leads only" CSV.
+- 2026-11-20 19:25 IST, Sahil ("as per suggestions add", after a Google Maps scraping tutorial video): **Best Way to Reach** column added to the CSV and Excel export (see Unreleased). The video's other idea, writing leads into a shared Google Sheet, is **not built**: it needs a Google Cloud service account that Sahil has to create.
 
 ## Unreleased
 
 ### Added
+- **Best Way to Reach** export column, after WhatsApp: WhatsApp if there is a mobile, else Email if it is verified, else Call, else Website, else Social media. The export now has 21 columns.
 - **Whole-country search.** Pick a country with no cities and press Add: the "All of <country>" target sweeps the whole country by itself, one place per cycle, smallest areas first: villages (1,000–15,000 people), towns (15,000–100,000), cities (100,000+), each state, then the country. Villages and towns are grid-searched over a 4 km / 8 km box around GeoNames' own coordinates (no geocoding); cities, states and the country are geocoded as before. Single cities always run first, and a place already listed is searched once. Place names stay unique per country ("Rampur, Uttar Pradesh 2", "Dubai, United Arab Emirates" for the emirate), so no place is skipped as a false duplicate.
 - Picking a country shows the size of the job (places per level × sectors, and the fewest days it can take); the run panel shows "Villages · 12 of 3,433 · Uttar Pradesh".
 - Place data from GeoNames (CC BY 4.0): `cities1000`, `admin1CodesASCII` and `countryInfo`, downloaded once (~10 MB) into `data/geo/`. New `pipeline/geo.py` and `pipeline/test_geo.py`.

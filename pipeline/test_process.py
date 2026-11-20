@@ -82,12 +82,18 @@ assert con.execute("SELECT owner_name, owner_source FROM leads WHERE place_id='a
 
 con.row_factory = p.sqlite3.Row
 row = p.lead_row(con.execute("SELECT * FROM leads WHERE place_id='b'").fetchone())
-assert len(p.COLUMNS) == 20 and len(row) == 20
-assert p.COLUMNS[:18] == ["Business Name", "Owner Name", "Owner Source", "Address/Location", "Postcode", "City", "Region",
-                          "Business Sector", "Category", "Phone", "Email", "WhatsApp", "Website",
+assert len(p.COLUMNS) == 21 and len(row) == 21
+assert p.COLUMNS[:19] == ["Business Name", "Owner Name", "Owner Source", "Address/Location", "Postcode", "City", "Region",
+                          "Business Sector", "Category", "Phone", "Email", "WhatsApp", "Best Way to Reach", "Website",
                           "Total Google Reviews", "Rating", "Short Brief", "Date Added", "Authenticity Verdict"]
 cols = dict(zip(p.COLUMNS, row))
 a_row = dict(zip(p.COLUMNS, p.lead_row(con.execute("SELECT * FROM leads WHERE place_id='a'").fetchone())))
+# Best Way to Reach: the strongest channel the lead has (mobile, verified email, any phone, own site, social page)
+assert a_row["Best Way to Reach"] == "WhatsApp" and cols["Best Way to Reach"] == "Social media"
+none = {"phone_e164": None, "email": None, "email_status": None, "phone": None}
+assert p.best_way({**none, "email": "x@y.ae", "email_status": "smtp_ok", "phone": "04 123"}, "", "") == "Email"
+assert p.best_way({**none, "email": "x@y.ae", "email_status": "invalid", "phone": "04 123"}, "", "") == "Call"
+assert p.best_way(none, "https://y.ae", "") == "Website" and p.best_way(none, "", "") == ""
 
 # the Excel history: the column header once, then per run its date and time, a blank row and its new leads
 import openpyxl
