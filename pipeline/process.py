@@ -51,6 +51,8 @@ def ensure_columns(con, table, cols):
 def db(path=None):
     DATA.mkdir(exist_ok=True)
     con = sqlite3.connect(path or DATA / "leads.db")
+    # WAL: the dashboard keeps reading while the loop writes (a country-wide query holds the write lock for minutes)
+    con.execute("PRAGMA journal_mode=WAL")
     con.executescript("""
         CREATE TABLE IF NOT EXISTS queries(q TEXT PRIMARY KEY, done_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS leads(
@@ -497,10 +499,11 @@ def dedupe_contacts(rows):
 
 
 def exportable(con):
-    """Leads with a verified email or a mobile (likely WhatsApp), both-channel leads first, one row per contact."""
+    """Every lead from every source (Sahil: "every lead from every source in one Excel file"), both-channel
+    leads first, one row per contact."""
     con.row_factory = sqlite3.Row
     return dedupe_contacts(con.execute(f"""
-        SELECT * FROM leads WHERE {VERIFIED} OR phone_e164 IS NOT NULL
+        SELECT * FROM leads
         ORDER BY ({VERIFIED}) + (phone_e164 IS NOT NULL) DESC, reviews DESC""").fetchall())
 
 
@@ -508,7 +511,7 @@ def not_in_sheet(con):
     """Exportable leads not yet in leads.xlsx. Leads already there go first in the dedupe, so a new listing of a
     contact the sheet already has is never added again."""
     con.row_factory = sqlite3.Row
-    rows = con.execute(f"SELECT * FROM leads WHERE {VERIFIED} OR phone_e164 IS NOT NULL "
+    rows = con.execute(f"SELECT * FROM leads "
                        f"ORDER BY xlsx_batch IS NULL, ({VERIFIED}) + (phone_e164 IS NOT NULL) DESC, reviews DESC").fetchall()
     return [r for r in dedupe_contacts(rows) if r["xlsx_batch"] is None]
 

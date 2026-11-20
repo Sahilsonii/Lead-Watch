@@ -164,4 +164,21 @@ enrich.crawl_site = fake_crawl
 stop = threading.Event(); stop.set()
 con.execute("UPDATE leads SET enriched_at = NULL")
 assert asyncio.run(enrich.enrich_pending(con, 10, stop))["crawled"] == 0              # Stop is honored
+
+# live run: a country-wide Foursquare query held the write lock for minutes and every dashboard poll got
+# "database is locked"; the page must keep reading while the loop writes
+writer = p.db()
+writer.execute("BEGIN EXCLUSIVE")
+writer.execute("INSERT INTO leads(place_id, name) VALUES ('w1', 'Being written')")
+reader = p.sqlite3.connect(p.DATA / "leads.db", timeout=0.5)
+assert reader.execute("SELECT COUNT(*) FROM leads WHERE place_id = 'w1'").fetchone()[0] == 0  # sees the last commit
+assert p.db().execute("SELECT COUNT(*) FROM leads").fetchone()[0] >= 0  # the dashboard's own connect works too
+writer.rollback()
+
+# every lead from every source reaches the sheet, even one with no email and no mobile; one row per contact
+p.ingest_source(disk, "foursquare", [{"source_id": "fsq1", "title": "Landline Only Realty", "phone": "04 388 2299",
+                                      "latitude": 25.0, "longitude": 55.0, "input_id": "AE|real estate agency|Dubai"}])
+names = [r["name"] for r in p.exportable(disk)]
+assert "Landline Only Realty" in names and len(names) == len(set(r["place_id"] for r in p.exportable(disk)))
+assert "Landline Only Realty" in [r["name"] for r in p.not_in_sheet(disk)]
 print("all checks passed")

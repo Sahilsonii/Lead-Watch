@@ -70,7 +70,7 @@ flowchart LR
 4. **Add** places from OpenStreetMap, Foursquare and Overture Maps for the same sectors and locations ([other sources](#-other-sources)). This runs even while Google is blocking, because it uses other hosts.
 5. **Read** up to 300 business websites politely: robots.txt first, one page at a time per site, 1–2 s apart, at most 4 pages each (home, contact, about, team).
 6. **Look up** missing owner names: UK businesses in Companies House ([UK owner names](#-uk-owner-names-companies-house)), then Brave Search if you turned it on ([LinkedIn names](#-linkedin-names-optional)).
-7. **Export** every lead with a verified email or a mobile number, best leads first.
+7. **Export** every lead from every source to `leads.csv` and `leads.xlsx`, best leads first (verified email and mobile at the top), one row per business.
 
 </details>
 
