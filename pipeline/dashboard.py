@@ -36,6 +36,8 @@ import process as p
 PORT = 8765
 IMAGE = "gosom/google-maps-scraper:v1.19.0"
 CONTAINER = "leads-scraper"
+DOCKER_DESKTOP = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Docker" / "Docker" / "Docker Desktop.exe"
+DOCKER_DOWN = "Docker Desktop is not running: open it and the run carries on"
 CONCURRENCY = int(os.environ.get("CONCURRENCY", 2))  # keep low on a datacenter IP to avoid blocks
 DEPTH = int(os.environ.get("DEPTH", 10))  # ~120 places per search; lower it if blocks become constant
 ZOOM = 15  # gosom's default; its README gives no separate value for grid mode
@@ -125,7 +127,9 @@ class Runner:
                     if run:  # depth and concurrency go with the run: gosom resumes only with identical options
                         run = save_state(run={**run, "results": f"raw-{time.strftime('%Y%m%d-%H%M%S')}.json",
                                               "resumes": 0, "depth": DEPTH, "concurrency": CONCURRENCY})["run"]
-                if run:
+                if run and not self.docker_ready():
+                    wait = 60  # not Google's fault: no pause, no resume used up
+                elif run:
                     self.scrape_once(run, resume)
                     if self.at_limit(p.db()):
                         continue
@@ -154,6 +158,22 @@ class Runner:
         self.phase = (f"Stopped after {self.written} new leads" if self.written >= self.limit else
                       "Stopped: leads.xlsx is open in Excel. Close it and press Start; the new leads are kept")
         return True
+
+    def docker_ready(self):
+        """The Google scraper runs in Docker. If Docker Desktop is closed, open it and give it 2 minutes to come up."""
+        up = lambda: subprocess.run(["docker", "info"], capture_output=True).returncode == 0
+        if up():
+            return True
+        if DOCKER_DESKTOP.exists():
+            self.phase = "starting Docker Desktop"
+            subprocess.Popen([str(DOCKER_DESKTOP)])
+            for _ in range(24):
+                if self.stop.wait(5):
+                    return False
+                if up():
+                    return True
+        self.phase = DOCKER_DOWN
+        return False
 
     def scrape_once(self, run, resume):
         out = p.DATA / run["results"]
@@ -266,8 +286,19 @@ def live_rows(path):
 def clear_feed():
     """Hide the places the feed shows now; the saved leads are untouched."""
     raws = raw_files()
-    if raws:
-        save_state(feed_cleared={"file": raws[-1].name, "n": len(live_rows(raws[-1]))})
+    save_state(feed_cleared={"file": raws[-1].name if raws else None, "n": len(live_rows(raws[-1])) if raws else 0,
+                             "rowid": p.db().execute("SELECT COALESCE(MAX(rowid), 0) FROM leads").fetchone()[0]})
+
+
+SOURCE_NAMES = {"google_maps": "Google Maps", "osm": "OpenStreetMap", "foursquare": "Foursquare", "overture": "Overture Maps"}
+
+
+def other_source_leads(con, n=60):
+    """The newest leads first found by OpenStreetMap, Foursquare or Overture (since Clear): (raw, place_id, source, at)."""
+    after = (load_state().get("feed_cleared") or {}).get("rowid", 0)
+    return [(json.loads(raw or "{}"), pid, src.split()[0], at) for raw, pid, src, at in con.execute(
+        "SELECT raw, place_id, sources, scraped_at FROM leads WHERE rowid > ? AND sources NOT LIKE 'google_maps%' "
+        "ORDER BY rowid DESC LIMIT ?", (after, n))]
 
 
 def since_clear(rows, name):
@@ -300,9 +331,12 @@ def stats():
     current = live_rows(raws[-1]) if raws else []
     searches_done, searches_total = grid.progress(con)
     log = p.DATA / "scraper.log"
+    # Google rows carry their file's time, other sources their insert time (both UTC), newest first
+    google_at = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(raws[-1].stat().st_mtime)) if raws else ""
+    google = [(e, e.get("place_id") or e.get("data_id") or e.get("link"), "google_maps", google_at)
+              for e in reversed(since_clear(current, raws[-1].name)[-60:] if raws else [])]
     feed = []
-    for e in reversed(since_clear(current, raws[-1].name)[-60:] if raws else []):
-        key = e.get("place_id") or e.get("data_id") or e.get("link")
+    for e, key, source, _ in sorted(google + other_source_leads(con), key=lambda x: x[3], reverse=True)[:60]:
         email, status, owner_name, owner_source = known.get(key, (None,) * 4)
         owner = p.lead_owner(e, {"email": email, "owner_name": owner_name, "owner_source": owner_source})
         cc, sector, _ = p.split_input(e.get("input_id"))
@@ -312,7 +346,8 @@ def stats():
             "rating": e.get("review_rating"), "reviews": e.get("review_count"),
             "mobile": p.to_e164(e.get("phone"), cc),
             "email": email, "email_status": status, "owner": owner[0], "owner_source": owner[0] and owner[1],
-            "dup": runner.phase == "scraping" and key in runner.known_at_start,
+            "dup": source == "google_maps" and runner.phase == "scraping" and key in runner.known_at_start,
+            "key": key, "source": SOURCE_NAMES.get(source, source),
         })
     state = load_state()
     google = state.get("blocks", {}).get("google", {})

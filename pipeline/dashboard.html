@@ -248,8 +248,9 @@
     planning: "Planning the next run", "reading websites": "Reading business websites",
     "adding other sources": "Adding places from OpenStreetMap, Foursquare and Overture",
     "searching Companies House": "Looking up UK owners in Companies House",
+    "starting Docker Desktop": "Opening Docker Desktop for the Google scraper…",
     "searching LinkedIn": "Looking up owners via Brave", exporting: "Writing leads.csv" };
-  const ACTIVE = new Set(["scraping", "verifying emails", "planning", "adding other sources", "reading websites", "searching Companies House", "searching LinkedIn", "exporting"]);
+  const ACTIVE = new Set(["scraping", "verifying emails", "planning", "adding other sources", "reading websites", "searching Companies House", "searching LinkedIn", "exporting", "starting Docker Desktop"]);
   const RUN_CLASS = { ok: ["ok", "Clean run"], blocked: ["found", "Blocked"], error: ["", "Scraper error"] };
 
   function renderHealth(d) {
@@ -302,7 +303,13 @@
       `<span class="chip">${esc(placeName(city, cc))} <span class="cc">${esc(cc)}</span><button aria-label="Remove ${esc(placeName(city, cc))}" data-i="${i}">×</button></span>`).join("")
       || `<span class="hint">No locations yet.</span>`;
   }
-  function dirty() { $("save-hint").textContent = "Unsaved changes"; $("save-hint").className = "hint dirty"; }
+  let unsaved = false;
+  function dirty() { unsaved = true; $("save-hint").textContent = "Unsaved changes"; $("save-hint").className = "hint dirty"; }
+  // a country picked (or cities typed) without pressing Add still counts; an already-listed country is not widened
+  function takePickedLocation() {
+    const cc = $("country").value;
+    if (cc && ($("cities").value.trim() || !locations.some(([, k]) => k === cc))) $("add-loc").click();
+  }
   $("chips").onclick = (e) => { const i = e.target.dataset.i; if (i !== undefined) { locations.splice(+i, 1); renderChips(); dirty(); } };
 
   // sectors: a dropdown of general sectors (sectors.txt) that opens once a country is picked, plus free text
@@ -356,12 +363,14 @@
     renderChips(); dirty();
   };
   $("cities").onkeydown = (e) => { if (e.key === "Enter") $("add-loc").click(); };
-  $("save").onclick = async () => {
+  async function saveTargets() {
+    takePickedLocation();
     await post("/targets", { sectors, locations });
-    loaded = false; // reload the cleaned, deduped version from the server
+    unsaved = false; loaded = false; // reload the cleaned, deduped version from the server
     await tick();
     $("save-hint").textContent = "Saved"; $("save-hint").className = "hint";
-  };
+  }
+  $("save").onclick = saveTargets;
 
   // ---- theme: follows the system until the toggle is used, then remembers the choice --------------
   const systemDark = matchMedia("(prefers-color-scheme: dark)");
@@ -383,7 +392,14 @@
 
   // ---- controls -----------------------------------------------------------
   $("start").onclick = async () => {
+    takePickedLocation();
+    if (!locations.length || !sectors.length) {
+      $("save-hint").textContent = `Nothing to search yet: pick ${locations.length ? "a sector" : "a country"}, then press Start.`;
+      $("save-hint").className = "hint dirty";
+      return;
+    }
     $("start").disabled = true;
+    if (unsaved) await saveTargets();  // Start runs what is on screen, not the last save
     await post("/start", { stop_after: parseInt($("stop-after").value, 10) || null });
     tick();
   };
@@ -403,7 +419,7 @@
     try { d = await (await fetch("/api", { cache: "no-store" })).json(); }
     catch { $("status").className = "status err"; $("status-text").textContent = "Dashboard server not reachable"; return; }
 
-    const failed = d.phase.startsWith("scraper failed");
+    const failed = d.phase.startsWith("scraper failed") || d.phase.startsWith("Docker Desktop is not");
     const halted = d.phase === d.health.message;
     $("status").className = "status" + (failed || halted ? " err" : ACTIVE.has(d.phase) ? " live" : "");
     $("status-text").textContent = PHASES[d.phase] || d.phase;
@@ -437,11 +453,11 @@
     $("feed-file").textContent = d.run_file || "";
     renderHealth(d);
 
-    const now = new Set(d.feed.map((r) => r.link));
+    const now = new Set(d.feed.map((r) => r.key));
     $("rows").innerHTML = d.feed.length ? d.feed.map((r) => `
-      <tr class="${seen && !seen.has(r.link) ? "new" : ""} ${r.dup ? "dup" : ""}">
-        <td><div class="name"><a href="${esc(r.link)}" target="_blank" rel="noopener">${esc(r.name)}</a></div>
-            <div class="cat">${esc(r.category)} · ${esc(country(r.cc))}</div></td>
+      <tr class="${seen && !seen.has(r.key) ? "new" : ""} ${r.dup ? "dup" : ""}">
+        <td><div class="name">${r.link ? `<a href="${esc(r.link)}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name)}</div>
+            <div class="cat">${esc(r.category)} · ${esc(country(r.cc))} · ${esc(r.source)}</div></td>
         <td>${r.owner ? `<div>${esc(r.owner)}</div><div class="cat">${esc(r.owner_source)}</div>` : '<span class="muted">—</span>'}</td>
         <td><div class="reach">${r.dup ? `<span class="pip">Already saved</span>` : ""}${emailPip(r)}${phonePip(r)}</div></td>
         <td class="m">${r.email ? esc(r.email) : r.emails.length ? esc(r.emails[0]) : '<span class="muted">—</span>'}</td>

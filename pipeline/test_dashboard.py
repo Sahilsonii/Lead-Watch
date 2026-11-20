@@ -33,7 +33,8 @@ d.STATE_FILE = tmp / "state.json"
 d.p.DATA = tmp
 d.p.ingest = lambda path, keys: ingested.append(list(keys)) or (0, 0)
 d.p.export = lambda *a: 0
-d.p.db = lambda path=None: type("C", (), {"execute": lambda *a: []})()
+real_db, fake_db = d.p.db, lambda path=None: type("C", (), {"execute": lambda *a: []})()
+d.p.db = fake_db
 ingested, launched = [], []
 
 
@@ -44,6 +45,8 @@ class Proc:
 
 def fake_run(code, places=1):
     def run(args, **kw):
+        if args[:2] == ["docker", "info"]:  # Docker is up
+            return Proc(0)
         launched.append(args)
         (tmp / "raw-1.json").write_text('{"title": "x"}\n' * places)
         return Proc(code)
@@ -162,12 +165,28 @@ assert d.LATEST["body"] == b'{"leads": 7}' and "ZeroDivisionError" in (tmp / "ru
 d.stats = real_stats
 
 # Clear: the feed hides the places already in it; later places show, and the next run's file shows in full
+import json
+d.p.db = lambda path=None: real_db(tmp / "leads.db")
+con = d.p.db()
+add = lambda pid, src, title: (con.execute("INSERT INTO leads(place_id, name, sources, raw) VALUES (?,?,?,?)",
+                                           (pid, title, src, json.dumps({"title": title, "link": "x/" + pid}))), con.commit())
+add("osm:1", "osm", "Old OSM place")
 (tmp / "raw-2.json").write_text('{"title": "a"}\n{"title": "b"}\n')
 d.clear_feed()
-assert d.since_clear(d.live_rows(tmp / "raw-2.json"), "raw-2.json") == []
+assert d.since_clear(d.live_rows(tmp / "raw-2.json"), "raw-2.json") == [] and d.other_source_leads(con) == []
 (tmp / "raw-2.json").write_text('{"title": "a"}\n{"title": "b"}\n{"title": "c"}\n')
 assert d.since_clear(d.live_rows(tmp / "raw-2.json"), "raw-2.json") == [{"title": "c"}]
 assert len(d.since_clear([{}, {}], "raw-3.json")) == 2
+
+# other sources join the feed: new OpenStreetMap/Foursquare/Overture leads show; Google-first leads come from the raw file
+add("osm:2", "osm", "New OSM place")
+add("ChIJ1", "google_maps osm", "Google place")
+add("foursquare:3", "foursquare overture", "New FSQ place")
+assert [x[1] for x in d.other_source_leads(con)] == ["foursquare:3", "osm:2"]
+feed = d.stats()["feed"]
+assert {(r["name"], r["source"]) for r in feed} == {("c", "Google Maps"), ("New OSM place", "OpenStreetMap"),
+                                                    ("New FSQ place", "Foursquare")}, feed
+d.p.db = fake_db
 
 # a resumed run is judged by its own log lines: an old "unusual traffic" line must not mark every resume blocked
 d.save_state(run=saved, blocks={}, running=True)
@@ -239,6 +258,18 @@ d.save_state(run=saved, running=True)
 r.loop()
 assert d.load_state()["run"] is None and not launched, launched
 grid.targets = lambda: (["dentist"], [("Dubai", "AE")])
+
+# Docker Desktop closed (and not installed where we look): no launch, no Google pause, no resume used up
+launched.clear()
+d.DOCKER_DESKTOP = tmp / "missing.exe"
+d.save_state(run=saved, running=True, blocks={"google": {"score": 0, "pause_min": 30, "stopped": False, "kind": "ok"}})
+d.subprocess.run = lambda args, **kw: launched.append(args) or Proc(1)
+r = d.Runner()
+seen = []
+r.docker_ready = (lambda orig: lambda: (seen.append((orig(), r.phase)), r.stop.set())[0][0])(r.docker_ready)
+r.loop()
+assert seen == [(False, d.DOCKER_DOWN)] and launched == [["docker", "info"]], (seen, launched)
+assert d.load_state()["run"] == saved and d.load_state()["blocks"]["google"]["kind"] == "ok"
 
 # sector dropdown: sectors.txt must survive save_targets unchanged (lowercase, no "#" or "|", no repeats)
 opts = d.p.lines("sectors.txt")
