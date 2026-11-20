@@ -218,7 +218,9 @@
             <div class="bar" id="h-run-bar" hidden><i style="width:0"></i></div>
             <div class="sub" id="h-run-sub"></div><code id="h-run-bbox"></code></div>
           <div class="cell"><div class="label">Google</div><div class="val" id="h-google">–</div><div class="sub" id="h-google-sub"></div></div>
-          <div class="cell"><div class="label">Websites read</div><div class="val num" id="h-sites">–</div><div class="sub" id="h-sites-sub"></div></div>
+          <div class="cell"><div class="label">Websites read</div><div class="val num" id="h-sites">–</div>
+            <div class="bar" role="progressbar" aria-label="Websites read" id="h-sites-bar"><i style="width:0"></i></div>
+            <div class="sub" id="h-sites-sub"></div></div>
           <div class="cell"><div class="label">OpenStreetMap</div><div class="val num" id="h-osm">–</div><div class="sub" id="h-osm-sub"></div></div>
           <div class="cell"><div class="label">Foursquare</div><div class="val num" id="h-fsq">–</div><div class="sub" id="h-fsq-sub"></div></div>
           <div class="cell"><div class="label">Overture Maps</div><div class="val num" id="h-ov">–</div><div class="sub" id="h-ov-sub"></div></div>
@@ -281,6 +283,9 @@
     $("h-stop").textContent = h.message || "";
 
     $("h-sites").textContent = fmt(en.crawled);
+    const sitesPct = en.crawled + (en.left || 0) ? Math.round((100 * en.crawled) / (en.crawled + (en.left || 0))) : 0;
+    $("h-sites-bar").firstElementChild.style.width = sitesPct + "%";
+    $("h-sites-bar").setAttribute("aria-valuenow", sitesPct);
     $("h-sites-sub").textContent = `${fmt(en.left || 0)} left · ${fmt(en.gone || 0)} gone · ${fmt(en.names)} owner names · ${fmt(en.blocked)} blocked`;
     $("h-li").textContent = fmt(d.owners.total);
     const src = d.sources, last = src.last || {}, o = last.osm || {}, f = last.foursquare || {}, v = last.overture || {};
