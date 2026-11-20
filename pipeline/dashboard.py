@@ -36,6 +36,7 @@ import process as p
 PORT = 8765
 IMAGE = "gosom/google-maps-scraper:v1.19.0"
 CONTAINER = "leads-scraper"
+REAP_S = 30  # how often to check the scraper log for a finished-but-hung gosom
 DOCKER_DESKTOP = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Docker" / "Docker" / "Docker Desktop.exe"
 DOCKER_DOWN = "Docker Desktop is not running: open it and the run carries on"
 CONCURRENCY = int(os.environ.get("CONCURRENCY", 2))  # keep low on a datacenter IP to avoid blocks
@@ -83,6 +84,16 @@ def docker_args(run, results, resume):
     if run["mode"] == "grid":
         args += ["-grid-bbox", run["bbox"], "-grid-cell", str(run["cell_km"]), "-grid-strict", "-zoom", str(ZOOM)]
     return args + ["-resume"] if resume else args
+
+
+def reap_hung(log_path, start, done, reaped):
+    """gosom can print "scrapemate exited" and then hang with its browsers open: stop the container a minute later."""
+    while not done.wait(REAP_S):
+        if b"scrapemate exited" in log_path.read_bytes()[start:]:
+            if not done.wait(2 * REAP_S):
+                reaped.append(True)
+                subprocess.run(["docker", "stop", "-t", "5", CONTAINER], capture_output=True)
+            return
 
 
 class Runner:
@@ -183,8 +194,12 @@ class Runner:
         log_path = p.DATA / "scraper.log"
         start = log_path.stat().st_size if resume and log_path.exists() else 0
         subprocess.run(["docker", "rm", "-f", CONTAINER], capture_output=True)  # a container left by a crash blocks the name
+        done, reaped = threading.Event(), []
         with open(log_path, "a" if resume else "w") as log:
+            threading.Thread(target=reap_hung, args=(log_path, start, done, reaped), daemon=True).start()
             code = subprocess.run(docker_args(run, out.name, resume), stdout=log, stderr=subprocess.STDOUT).returncode
+        done.set()
+        code = 0 if reaped else code  # gosom had finished; only its shutdown hung
         stopped = self.stop.is_set()
         if not out.exists():  # no output at all: the scraper never started (Docker down), not a Google block
             kind = "error"

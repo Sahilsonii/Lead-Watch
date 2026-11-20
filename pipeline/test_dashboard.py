@@ -271,6 +271,32 @@ r.loop()
 assert seen == [(False, d.DOCKER_DOWN)] and launched == [["docker", "info"]], (seen, launched)
 assert d.load_state()["run"] == saved and d.load_state()["blocks"]["google"]["kind"] == "ok"
 
+# gosom can hang after "scrapemate exited" with its browsers still open: stop the container, count the run as done
+import time
+d.REAP_S = 0.05
+stops = []
+
+
+def hung_run(args, **kw):
+    if args[:2] == ["docker", "stop"]:
+        return stops.append(args) or Proc(0)
+    if args[:2] != ["docker", "run"]:
+        return Proc(0)
+    kw["stdout"].write('{"message":"scrapemate exited"}\n')
+    kw["stdout"].flush()
+    (tmp / "raw-1.json").write_text('{"title": "x"}\n')
+    for _ in range(100):
+        if stops:
+            return Proc(143)
+        time.sleep(0.05)
+    raise AssertionError("the hung container was never stopped")
+
+
+d.save_state(run=saved, blocks={}, running=True)
+d.subprocess.run = hung_run
+d.Runner().scrape_once(saved, resume=False)
+assert stops and d.load_state()["run"] is None and d.load_state()["last_run"]["class"] == "ok", d.load_state()
+
 # sector dropdown: sectors.txt must survive save_targets unchanged (lowercase, no "#" or "|", no repeats)
 opts = d.p.lines("sectors.txt")
 assert len(opts) >= 40 and len(set(opts)) == len(opts), "sectors.txt has repeats"
