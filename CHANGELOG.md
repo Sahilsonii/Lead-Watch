@@ -33,6 +33,7 @@ Kept up to date after every step, so the work can continue from any account or s
 - Still open from 02:23: which more fields and open datasets to add for marketing (asked how Sahil will market: email, WhatsApp, calls, ads).
 - 2026-11-21 02:55 IST: Removed card checked live in the browser: 29,000 unique (live) leads; 237 removed (167 no phone, 70 website gone) from 101 Overture, 73 Foursquare, 33 Google, 30 OpenStreetMap. The gone count grows as the ~10,000 unread and 931 re-queued sites are read. Dashboard restarted on 0d9683a.
 - 2026-11-21 03:00 IST, Sahil: "website reading is still stuck". It wasn't: ~690 sites in 3 minutes, but they were the 931 re-queued timeouts (566 gone), which the Websites card already counted. The card now shows sites left and gone (live: 9,991 left, 786 gone; Removed 953).
+- 2026-11-21, Sahil: "add small progress bar in card". The Websites card has a bar of read ÷ (read + left), checked live: 18% (2,150 of 12,141). Dashboard restarted on c29b50d.
 
 ## Unreleased
 
