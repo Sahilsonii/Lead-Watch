@@ -127,18 +127,34 @@ def next_run(con, fetch=http_get_json, load=geo.towns):
 
 
 def progress(con, load=geo.towns):
-    """(done, total) sector x location pairs, for the dashboard. Done the way the planner sees it, using only
-    the cached geocode (never calls Nominatim)."""
+    """(done, total) sector x location pairs, for the dashboard."""
+    flags = [f for _, fs in searched(con, load) for f in fs]
+    return sum(flags), len(flags)
+
+
+def by_country(con, load=geo.towns):
+    """{cc: [locations done, locations total]}; a location is done once every sector was searched there."""
+    out = {}
+    for cc, fs in searched(con, load):
+        counts = out.setdefault(cc, [0, 0])
+        counts[0] += all(fs)
+        counts[1] += 1
+    return out
+
+
+def searched(con, load=geo.towns):
+    """[(cc, [searched? per sector])] per location. Done the way the planner sees it, using only the cached
+    geocode (never calls Nominatim)."""
     sectors, locations = targets()
     done = done_keys(con)
     try:
         locs = expand(locations, load)
     except OSError:  # GeoNames not downloaded yet and no network: count what is known
         locs = expand([l for l in locations if l[0] != ALL], load)
-    flags = []
+    out = []
     cached = {(n, c): (b, a) for n, c, b, a in con.execute("SELECT name, cc, bbox, area_km2 FROM locations")}
     for loc, cc, town in locs:  # one query, not one per town: a page poll covered 13,600 towns
         row = cached.get((loc, cc))
         grid_mode = bool(town and town["bbox"]) or bool(row and row[0] and row[1] <= MAX_GRID_AREA_KM2)
-        flags += [(f"grid:{s}|{loc}" if grid_mode else plain_key(s, loc)) in done for s in sectors]
-    return sum(flags), len(flags)
+        out.append((cc, [(f"grid:{s}|{loc}" if grid_mode else plain_key(s, loc)) in done for s in sectors]))
+    return out

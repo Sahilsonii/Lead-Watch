@@ -213,6 +213,11 @@ assert s["removed"] == {"total": 5, "reasons": {"no phone": 4, "website gone": 1
                         "sources": {"osm": 2, "foursquare": 2, "google_maps": 1}}, s["removed"]
 assert s["enrich"]["gone"] == 1 and s["enrich"]["left"] == 0  # the card shows progress, not only a total
 assert s["leads"] == 0  # every lead here is removed, so none counts as a unique lead
+real_by_country = d.grid.by_country
+d.grid.by_country = lambda con: {"GB": [1, 3], "AE": [0, 2]}  # the counting itself is checked in test_grid.py
+assert d.stats()["places"] == [{"cc": "GB", "name": "United Kingdom", "done": 1, "left": 2},
+                               {"cc": "AE", "name": "United Arab Emirates", "done": 0, "left": 2}]
+d.grid.by_country = real_by_country
 d.p.db = fake_db
 
 # a resumed run is judged by its own log lines: an old "unusual traffic" line must not mark every resume blocked

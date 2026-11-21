@@ -429,6 +429,8 @@ def stats():
         "run_with_email": sum(1 for e in current if e.get("emails")),
         "batch": p.lines("data/batch.txt") if (p.DATA / "batch.txt").exists() else [],
         "searches_total": searches_total, "searches_done": searches_done,
+        "places": [{"cc": cc, "name": p.country_name(cc), "done": done, "left": total - done}
+                   for cc, (done, total) in grid.by_country(con).items()],
         "leads": one(f"SELECT COUNT(*) FROM leads WHERE {p.LIVE}"),
         "emails_ok": one(f"SELECT COUNT(*) FROM leads WHERE {p.VERIFIED}"),
         "mobiles": one("SELECT COUNT(*) FROM leads WHERE phone_e164 IS NOT NULL"),

@@ -48,8 +48,12 @@ assert run["location"] == "London" and run["mode"] == "plain" and run["bbox"] is
 assert run["inputs"][0] == "dentist in London #!#GB|dentist|London"
 assert run["keys"] == ["dentist in London", "real estate agency in London"]
 assert grid.progress(con) == (2, 4)
-con.executemany("INSERT INTO queries(q) VALUES (?)", [(k,) for k in run["keys"]])
+assert grid.by_country(con) == {"AE": [1, 1], "GB": [0, 1]}  # locations done, total, per country
+con.execute("INSERT INTO queries(q) VALUES (?)", (run["keys"][0],))
+assert grid.by_country(con)["GB"] == [0, 1]  # one of two sectors searched: the location is not done yet
+con.executemany("INSERT INTO queries(q) VALUES (?)", [(k,) for k in run["keys"][1:]])
 assert grid.next_run(con, f) is None and grid.progress(con) == (4, 4)
+assert grid.by_country(con) == {"AE": [1, 1], "GB": [1, 1]}
 
 # a failed geocode also falls back to plain searches
 con = p.db(":memory:")
@@ -80,6 +84,7 @@ assert run["inputs"] == ["dentist in Hatta, Dubai #!#AE|dentist|Hatta"]  # Googl
 assert grid.progress(con, load) == (2, 4)
 con.execute("INSERT INTO queries(q) VALUES ('grid:dentist|Hatta')")
 assert grid.progress(con, load) == (3, 4)  # a given box counts as grid mode without a cached geocode
+assert grid.by_country(con, load) == {"GB": [1, 1], "AE": [2, 3]}  # Dubai and Hatta done, Sharjah left
 run = grid.next_run(con, f, load)  # a city: geocoded with its state
 assert run["location"] == "Sharjah" and run["mode"] == "grid" and "q=Sharjah%2C+Sharjah" in f.calls[-1]
 
