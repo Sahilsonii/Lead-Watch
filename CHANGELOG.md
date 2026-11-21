@@ -35,6 +35,7 @@ Kept up to date after every step, so the work can continue from any account or s
 - 2026-11-21 03:00 IST, Sahil: "website reading is still stuck". It wasn't: ~690 sites in 3 minutes, but they were the 931 re-queued timeouts (566 gone), which the Websites card already counted. The card now shows sites left and gone (live: 9,991 left, 786 gone; Removed 953).
 - 2026-11-21, Sahil: "add small progress bar in card". The Websites card has a bar of read ÷ (read + left), checked live: 18% (2,150 of 12,141). Dashboard restarted on c29b50d.
 - 2026-11-21 03:15 IST, Sahil: "it is crashed". Not a Lead Watch crash: the Claude app restarted at 03:06:21 and took the dashboard (started from the agent's shell, so its child) down with it; last DB write 03:06:20, empty error log, no Windows crash record. Restarted through WMI (`Invoke-CimMethod Win32_Process -MethodName Create`, `cmd /c` with the two log redirects), so its parent is `WmiPrvSE.exe` and it outlives app restarts; WMI processes still get the User `HF_TOKEN` and `LEADS_XLSX`. Resumed at 3,100 sites read, 9,036 left.
+- 2026-11-21 05:46 IST, Sahil: "it is crashed" again. The WMI start gave cmd.exe a visible console window; at 05:45:45 it got Ctrl+C or was closed (`^C` in `dashboard.err.log`), which stops the dashboard cleanly. Last DB write 05:43:49, no app restart this time. Restarted the same way plus `Win32_ProcessStartup` `ShowWindow = 0`, so there is no window to close (window handle 0, parent `WmiPrvSE.exe`). All websites now read: 12,241 read, 0 left.
 
 ## Unreleased
 
