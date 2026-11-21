@@ -1,4 +1,5 @@
 """Self-check for the parsing, dedupe and export rules. Run: python pipeline/test_process.py"""
+import os
 import process as p
 
 # phone normalization: local formats need the country hint, landlines are dropped
@@ -122,6 +123,7 @@ import openpyxl
 import tempfile
 from pathlib import Path
 p.DATA = Path(tempfile.mkdtemp())  # never the real data/ folder
+os.environ.pop("LEADS_XLSX", None)  # nor the real shared Excel file: a set LEADS_XLSX overwrote it on 2026-11-21
 xlsx = p.DATA / "check.xlsx"
 blank = [""] * (len(p.COLUMNS) - 2)
 assert p.write_xlsx(xlsx, [("2026-11-20 04:05", [["=HYPERLINK(\"http://x\")", 4.5] + blank, ["Second", 1] + blank]),
