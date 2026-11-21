@@ -107,7 +107,7 @@ Inside each level the least populated place goes first. Cities you add yourself 
 
 Place data comes from [GeoNames](https://www.geonames.org/) (CC BY 4.0), downloaded once (about 10 MB) into `data/geo/` the first time you pick a country.
 - **Start / Stop:** the choice survives a reboot. If the loop was running, it resumes by itself.
-- **Run & health:** the current location, grid cell progress, Google's status, websites read and LinkedIn usage.
+- **Run & health:** the current location, grid cell progress, Google's status, locations searched (done and left per country; a location is done once every sector was searched there), websites read and LinkedIn usage.
 - **Light / dark** toggle that remembers your choice.
 
 > [!NOTE]
